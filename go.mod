@@ -1,3 +1,3 @@
-module github.com/telerico-jones/climan
+module github.com/jefferson-julio/climan
 
-go 1.19
+go 1.26
