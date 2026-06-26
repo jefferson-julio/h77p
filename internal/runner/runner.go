@@ -2,7 +2,10 @@ package runner
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
+	"github.com/jefferson-julio/h77p/internal/envfile"
 	"github.com/jefferson-julio/h77p/internal/executor"
 	"github.com/jefferson-julio/h77p/internal/httpfile"
 	"github.com/jefferson-julio/h77p/internal/script"
@@ -19,6 +22,7 @@ type Result struct {
 // Run executes a single named request from file. If requestName is empty the
 // first request is used.
 func Run(file *httpfile.File, requestName string, vars map[string]string) (*Result, error) {
+	seedEnvVars(file, vars)
 	seedFileVars(file, vars)
 
 	if requestName == "" {
@@ -39,6 +43,7 @@ func Run(file *httpfile.File, requestName string, vars map[string]string) (*Resu
 // RunAll executes every request in file sequentially. Variables written by
 // set() in one post-script are visible to subsequent requests.
 func RunAll(file *httpfile.File, vars map[string]string) ([]*Result, error) {
+	seedEnvVars(file, vars)
 	seedFileVars(file, vars)
 
 	results := make([]*Result, 0, len(file.Requests))
@@ -155,10 +160,27 @@ func flattenHeaders(headers map[string][]string) map[string]string {
 	return m
 }
 
+// seedEnvVars loads .env files from the http file's directory up to the process
+// CWD and adds their variables to vars (lowest priority — only sets if absent).
+func seedEnvVars(file *httpfile.File, vars map[string]string) {
+	if file.Path == "" {
+		return
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	for k, v := range envfile.Load(filepath.Dir(file.Path), cwd) {
+		if _, exists := vars[k]; !exists {
+			vars[k] = v
+		}
+	}
+}
+
+// seedFileVars copies file-level @variable declarations into vars. HTTP file
+// variables take precedence over .env values, so they always overwrite.
 func seedFileVars(file *httpfile.File, vars map[string]string) {
 	for _, v := range file.Variables {
-		if _, exists := vars[v.Name]; !exists {
-			vars[v.Name] = v.Value
-		}
+		vars[v.Name] = v.Value
 	}
 }
