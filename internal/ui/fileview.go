@@ -3,18 +3,29 @@ package ui
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/jefferson-julio/h77p/internal/executor"
 	"github.com/jefferson-julio/h77p/internal/httpfile"
 	"github.com/jefferson-julio/h77p/internal/parser"
+	"github.com/jefferson-julio/h77p/internal/runner"
+	"github.com/jefferson-julio/h77p/internal/writer"
 )
+
+// requestDoneMsg is sent by a background tea.Cmd when an HTTP request finishes.
+type requestDoneMsg struct {
+	result *runner.Result
+	action string // "run" | "test" | "example"
+	err    error
+}
 
 // FileView is the .http file inspector sub-model. Left panel lists requests
 // by method + URL; right panel shows a scrollable, syntax-highlighted preview
-// of the active request block.
+// of the active request block (or the last HTTP response).
 type FileView struct {
 	file      *httpfile.File
 	cursor    int
@@ -25,6 +36,11 @@ type FileView struct {
 
 	search   searchInput
 	filtered []int // indices into file.Requests that pass the current filter
+
+	working    bool           // true while an HTTP request is in flight
+	statusMsg  string         // brief status shown in the bar after a run
+	lastResult *runner.Result // most recent completed result
+	showResult bool           // right panel shows result instead of request source
 }
 
 func newFileView(path string, w, h int) (FileView, error) {
@@ -79,7 +95,11 @@ func (fv FileView) withSyncedPreview() FileView {
 		return fv
 	}
 	reqIdx := fv.filtered[fv.cursor]
-	fv.preview.SetContent(renderRequest(fv.file.Requests[reqIdx]))
+	if fv.showResult && fv.lastResult != nil {
+		fv.preview.SetContent(renderResult(fv.lastResult))
+	} else {
+		fv.preview.SetContent(renderRequest(fv.file.Requests[reqIdx]))
+	}
 	fv.preview.GotoTop()
 	return fv
 }
@@ -103,6 +123,11 @@ func (fv FileView) withScrollAdjusted() FileView {
 }
 
 func (fv FileView) update(msg tea.Msg) (FileView, tea.Cmd) {
+	// Handle background request results before the key check.
+	if done, ok := msg.(requestDoneMsg); ok {
+		return fv.handleRequestDone(done)
+	}
+
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		// Non-key messages (scroll events, etc.) go straight to the viewport.
@@ -129,35 +154,121 @@ func (fv FileView) update(msg tea.Msg) (FileView, tea.Cmd) {
 	switch key.String() {
 	case "/":
 		fv.search.active = true
-		// Position cursor at end so the user can refine or backspace to clear.
 		fv.search.pos = len([]rune(fv.search.query))
 
 	case "j", "down":
 		if fv.cursor < n-1 {
 			fv.cursor++
+			fv.showResult = false
 			fv = fv.withScrollAdjusted().withSyncedPreview()
 		}
 	case "k", "up":
 		if fv.cursor > 0 {
 			fv.cursor--
+			fv.showResult = false
 			fv = fv.withScrollAdjusted().withSyncedPreview()
 		}
 	case "g":
 		fv.cursor = 0
+		fv.showResult = false
 		fv = fv.withScrollAdjusted().withSyncedPreview()
 	case "G":
 		if n > 0 {
 			fv.cursor = n - 1
+			fv.showResult = false
 			fv = fv.withScrollAdjusted().withSyncedPreview()
 		}
+
+	case "r":
+		if !fv.working && n > 0 {
+			fv.working = true
+			fv.statusMsg = "running…"
+			return fv, fv.cmdRun("run")
+		}
+	case "t":
+		if !fv.working && n > 0 {
+			fv.working = true
+			fv.statusMsg = "running tests…"
+			return fv, fv.cmdRun("test")
+		}
+	case "e":
+		if !fv.working && n > 0 {
+			fv.working = true
+			fv.statusMsg = "running…"
+			return fv, fv.cmdRun("example")
+		}
+
 	case "h", "esc":
 		return fv, func() tea.Msg { return backMsg{} }
+
 	default:
-		// Forward scroll keys (ctrl+d/u, pgup/pgdn, etc.) to the viewport.
 		var cmd tea.Cmd
 		fv.preview, cmd = fv.preview.Update(msg)
 		return fv, cmd
 	}
+	return fv, nil
+}
+
+// cmdRun fires a background tea.Cmd that runs the currently selected request.
+func (fv FileView) cmdRun(action string) tea.Cmd {
+	if len(fv.filtered) == 0 || fv.file == nil {
+		return nil
+	}
+	req := fv.file.Requests[fv.filtered[fv.cursor]]
+	file := fv.file
+	return func() tea.Msg {
+		result, err := runner.Run(file, req.Name, make(map[string]string))
+		return requestDoneMsg{result: result, action: action, err: err}
+	}
+}
+
+// handleRequestDone processes an incoming requestDoneMsg.
+func (fv FileView) handleRequestDone(msg requestDoneMsg) (FileView, tea.Cmd) {
+	fv.working = false
+
+	if msg.err != nil {
+		fv.statusMsg = "error: " + msg.err.Error()
+		return fv, nil
+	}
+
+	fv.lastResult = msg.result
+	fv.showResult = true
+
+	// Build status bar summary.
+	if msg.result != nil && msg.result.HTTP != nil {
+		h := msg.result.HTTP
+		fv.statusMsg = fmt.Sprintf("%s  %dms", h.Status, h.Duration.Milliseconds())
+		if len(msg.result.Tests) > 0 {
+			passed, failed := 0, 0
+			for _, t := range msg.result.Tests {
+				if t.Passed {
+					passed++
+				} else {
+					failed++
+				}
+			}
+			fv.statusMsg += fmt.Sprintf("  ·  %d/%d tests passed", passed, passed+failed)
+		}
+	}
+
+	// For the "example" action: persist the response to the .http file.
+	if msg.action == "example" && msg.result != nil && msg.result.HTTP != nil && fv.file != nil {
+		h := msg.result.HTTP
+		req := fv.file.Requests[fv.filtered[fv.cursor]]
+		ex := httpResultToExample(h)
+		if err := writer.SaveExample(fv.file.Path, req.Name, ex); err != nil {
+			fv.statusMsg += "  (save failed: " + err.Error() + ")"
+		} else {
+			fv.statusMsg += "  ·  example saved"
+			// Reload the file so the right panel reflects the new @example block on next navigation.
+			if updated, err := parser.ParseFile(fv.file.Path); err == nil {
+				fv.file = updated
+				fv.filtered = fv.computeFiltered()
+			}
+		}
+	}
+
+	fv = fv.withSyncedPreview()
 	return fv, nil
 }
 
@@ -219,13 +330,84 @@ func (fv FileView) statusLine() string {
 	if fv.search.active {
 		return styleStatusBar.Width(fv.width).Render(fv.search.renderPrompt())
 	}
-	hint := "j/k move  g/G top/bot  ctrl+d/u scroll  / search  h/esc back  q quit"
+	if fv.working {
+		return styleStatusBar.Width(fv.width).Render(fv.statusMsg)
+	}
+
+	hint := "r run  t test  e save example  j/k move  g/G top/bot  ctrl+d/u scroll  / search  h/esc back  q quit"
+	if fv.statusMsg != "" {
+		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("[" + fv.statusMsg + "]")
+		hint = tag + "  " + hint
+	}
 	if fv.search.query != "" {
 		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).
 			Render(fmt.Sprintf("[/%s]", fv.search.query))
 		hint = tag + "  " + hint
 	}
 	return styleStatusBar.Width(fv.width).Render(hint)
+}
+
+// renderResult builds a coloured response preview for the viewport.
+func renderResult(result *runner.Result) string {
+	if result == nil {
+		return styleDim.Render("(no result)")
+	}
+	if result.Err != nil {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("error: " + result.Err.Error())
+	}
+
+	h := result.HTTP
+	var b strings.Builder
+
+	b.WriteString(colorStatusLine(h.Proto+" "+h.Status) + "\n")
+
+	keys := make([]string, 0, len(h.Headers))
+	for k := range h.Headers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		b.WriteString(colorHeader(k+": "+strings.Join(h.Headers[k], ", ")) + "\n")
+	}
+
+	if h.Body != "" {
+		b.WriteString("\n")
+		b.WriteString(h.Body)
+		b.WriteString("\n")
+	}
+
+	if len(result.Tests) > 0 {
+		b.WriteString("\n")
+		for _, t := range result.Tests {
+			if t.Passed {
+				b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("  PASS  "+t.Name) + "\n")
+			} else {
+				b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("  FAIL  "+t.Name+" — "+t.Error) + "\n")
+			}
+		}
+	}
+
+	return b.String()
+}
+
+// httpResultToExample converts an HTTP response into a file example block.
+func httpResultToExample(ex *executor.Result) *httpfile.Example {
+	example := &httpfile.Example{
+		Status: ex.Proto + " " + ex.Status,
+		Body:   ex.Body,
+	}
+	keys := make([]string, 0, len(ex.Headers))
+	for k := range ex.Headers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		example.Headers = append(example.Headers, httpfile.Header{
+			Name:  k,
+			Value: strings.Join(ex.Headers[k], ", "),
+		})
+	}
+	return example
 }
 
 // renderRequest builds the text block for a single request that gets fed into
