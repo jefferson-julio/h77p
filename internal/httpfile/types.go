@@ -14,6 +14,7 @@ type Variable struct {
 
 type Request struct {
 	Name       string
+	Variables  []Variable
 	Method     string
 	URL        string
 	Headers    []Header

@@ -135,6 +135,12 @@ func (p *p) parseRequest(name string) (httpfile.Request, error) {
 			}
 			req.Example = ex
 
+		case strings.HasPrefix(line, "@") && !isBlockTag(line):
+			p.pos++
+			if v, err := parseVarDecl(line); err == nil {
+				req.Variables = append(req.Variables, v)
+			}
+
 		default:
 			// Only try to parse the method line once.
 			if req.Method == "" {

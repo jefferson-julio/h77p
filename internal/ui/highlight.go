@@ -220,6 +220,15 @@ func colorLineNormal(raw, trimmed string) (string, hlState) {
 	case trimmed == "%}":
 		return clrDelim.Render(raw), hlState{}
 
+	case strings.HasPrefix(trimmed, "@") && !isBlockTag(trimmed) && strings.Contains(trimmed, "="):
+		// Variable declaration: @name = value (file-level or request-level)
+		rest := strings.TrimPrefix(trimmed, "@")
+		name, val, ok := strings.Cut(rest, "=")
+		if !ok {
+			return raw, hlState{}
+		}
+		return clrKeyword.Render("@"+strings.TrimSpace(name)) + " " + clrHeaderSep.Render("=") + " " + colorizeTokens(strings.TrimSpace(val), clrHeaderVal), hlState{}
+
 	case isMethodLine(trimmed):
 		// After the method line we expect request headers next.
 		return colorMethodLine(raw), hlState{mode: modeReqHeaders}

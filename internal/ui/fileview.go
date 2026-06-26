@@ -623,6 +623,10 @@ func renderRequest(req httpfile.Request) string {
 
 	fmt.Fprintf(&b, "### %s\n", req.Name)
 
+	for _, v := range req.Variables {
+		fmt.Fprintf(&b, "@%s = %s\n", v.Name, v.Value)
+	}
+
 	if req.PreScript != "" {
 		fmt.Fprintf(&b, "\n@pre-request {%%\n%s\n%%}\n", req.PreScript)
 	}

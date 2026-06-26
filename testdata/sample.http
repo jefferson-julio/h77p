@@ -34,13 +34,15 @@ Content-Type: application/json; charset=utf-8
   request.headers["X-Request-Id"] = "h77p-" + Date.now();
 %}
 
+@testId = 123
+
 POST {{baseUrl}}/posts
 Content-Type: application/json
 
 {
   "title": "Hello from h77p",
   "body": "Testing the post endpoint",
-  "userId": 1
+  "userId": {{testId}}
 }
 
 @post-response {%
@@ -50,7 +52,6 @@ Content-Type: application/json
 
   set("createdId", String(response.json().id));
 %}
-
 ### Get Created Post
 GET {{baseUrl}}/posts/{{createdId}}
 Accept: application/json

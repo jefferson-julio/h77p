@@ -61,6 +61,11 @@ func RunAll(file *httpfile.File, vars map[string]string) ([]*Result, error) {
 }
 
 func runOne(req *httpfile.Request, vars map[string]string) (*Result, error) {
+	// Request-level variables override file-level and .env variables.
+	for _, v := range req.Variables {
+		vars[v.Name] = v.Value
+	}
+
 	// shallow copy so pre-script mutations don't modify the parsed file
 	reqCopy := *req
 	if len(req.Headers) > 0 {
