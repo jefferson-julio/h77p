@@ -255,7 +255,7 @@ func (b Browser) view() string {
 	header := styleHeader.Width(b.width).Render(b.cwd)
 	left := b.buildLeftLines(lw, ch)
 	right := buildLinesFromString(b.preview, rw, ch)
-	body := zipPanels(left, right, lw, ch)
+	body := zipPanels(left, right, lw, rw, ch)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, b.statusLine())
 }
@@ -307,7 +307,9 @@ func buildLinesFromString(content string, w, h int) []string {
 	}
 	raw := strings.Split(content, "\n")
 	for i := 0; i < min(len(raw), h); i++ {
-		lines[i] = ansi.Truncate(raw[i], w, "")
+		// Expand tabs to 4 spaces so terminal tab-stop expansion doesn't
+		// misalign rows (ansi.StringWidth counts \t as 1 col, terminals don't).
+		lines[i] = ansi.Truncate(strings.ReplaceAll(raw[i], "\t", "    "), w, "")
 	}
 	return lines
 }

@@ -118,18 +118,26 @@ func truncate(s string, maxWidth int) string {
 }
 
 // zipPanels stitches left and right line slices side-by-side with a divider.
-func zipPanels(left, right []string, lw, h int) string {
+// Every right-side line is padded to exactly rw visible characters so that
+// stale terminal content from a previous (wider) render is fully overwritten.
+func zipPanels(left, right []string, lw, rw, h int) string {
 	div := styleDivider.Render("│")
+	blankL := strings.Repeat(" ", lw)
+	blankR := strings.Repeat(" ", rw)
 	rows := make([]string, h)
-	blank := strings.Repeat(" ", lw)
 	for i := 0; i < h; i++ {
-		l := blank
+		l := blankL
 		if i < len(left) {
 			l = left[i]
 		}
-		r := ""
+		r := blankR
 		if i < len(right) {
-			r = right[i]
+			line := right[i]
+			vw := lipgloss.Width(line)
+			if vw < rw {
+				line += strings.Repeat(" ", rw-vw)
+			}
+			r = line
 		}
 		rows[i] = l + div + r
 	}

@@ -467,7 +467,7 @@ func (pv PartsView) view() string {
 	tabBar := renderTabBar(pv.activeTab, rw)
 	vpLines := strings.Split(pv.preview.View(), "\n")
 	right := append([]string{tabBar}, vpLines...)
-	body := zipPanels(left, right, lw, ch)
+	body := zipPanels(left, right, lw, rw, ch)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, pv.statusLine())
 }

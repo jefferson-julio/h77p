@@ -167,6 +167,13 @@ func highlightHTTP(src string) string {
 	}
 	flushBody() // request body ending at EOF
 
+	// Expand tabs to spaces so ansi.StringWidth (which counts \t as 1) matches
+	// what the terminal actually renders (tab stops at every 8 columns).
+	for i, line := range out {
+		if strings.ContainsRune(line, '\t') {
+			out[i] = strings.ReplaceAll(line, "\t", "    ")
+		}
+	}
 	return strings.Join(out, "\n")
 }
 

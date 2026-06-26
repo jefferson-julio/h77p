@@ -509,7 +509,7 @@ func (fv FileView) view() string {
 	tabBar := renderTabBar(fv.activeTab, rw)
 	vpLines := strings.Split(fv.preview.View(), "\n")
 	right := append([]string{tabBar}, vpLines...)
-	body := zipPanels(left, right, lw, ch)
+	body := zipPanels(left, right, lw, rw, ch)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, fv.statusLine())
 }

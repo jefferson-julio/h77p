@@ -91,7 +91,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.fileView = fv
 		m.mode = modeFileView
-		return m, fv.watchCmd()
+		return m, tea.Batch(fv.watchCmd(), tea.ClearScreen)
 
 	case openPartsMsg:
 		pv := newPartsView(msg.path, msg.file, msg.req, m.width, m.height)
@@ -102,7 +102,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		pv = pv.withSyncedPreview()
 		m.partsView = pv
 		m.mode = modePartsView
-		return m, pv.watchCmd()
+		return m, tea.Batch(pv.watchCmd(), tea.ClearScreen)
 
 	case backMsg:
 		switch m.mode {
@@ -120,11 +120,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fileView.watchDone = make(chan struct{})
 			var cmd tea.Cmd
 			m.fileView, cmd = m.fileView.handleFileChanged()
-			return m, cmd
+			return m, tea.Batch(cmd, tea.ClearScreen)
 		default:
 			m.mode = modeBrowser
 		}
-		return m, nil
+		return m, tea.ClearScreen
 	}
 
 	switch m.mode {
