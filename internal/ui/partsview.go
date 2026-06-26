@@ -19,8 +19,9 @@ import (
 const (
 	partRequest    = 0
 	partPreScript  = 1
-	partPostScript = 2
-	partExample    = 3
+	partJQ         = 2
+	partPostScript = 3
+	partExample    = 4
 )
 
 type openPartsMsg struct {
@@ -181,7 +182,7 @@ func (pv PartsView) update(msg tea.Msg) (PartsView, tea.Cmd) {
 		pv = pv.withSyncedPreview()
 
 	case "j", "down":
-		if pv.cursor < 3 {
+		if pv.cursor < 4 {
 			pv.cursor++
 			pv = pv.withSyncedPreview()
 		}
@@ -242,8 +243,11 @@ func (pv PartsView) cmdEdit() tea.Cmd {
 	content := pv.editorContent()
 
 	ext := ".http"
-	if kind == partPreScript || kind == partPostScript {
+	switch kind {
+	case partPreScript, partPostScript:
 		ext = ".js"
+	case partJQ:
+		ext = ".jq"
 	}
 
 	tmp, err := os.CreateTemp("", "h77p-*"+ext)
@@ -311,6 +315,9 @@ func (pv PartsView) handleRequestDone(msg requestDoneMsg) (PartsView, tea.Cmd) {
 
 	if msg.action == "example" && msg.result != nil && msg.result.HTTP != nil {
 		ex := httpResultToExample(msg.result.HTTP)
+		if msg.result.JQOutput != "" {
+			ex.Body = msg.result.JQOutput
+		}
 		if err := writer.SaveExample(pv.path, pv.req.Name, ex); err != nil {
 			pv.status += "  (save failed: " + err.Error() + ")"
 		} else {
@@ -348,6 +355,11 @@ func (pv PartsView) editorContent() string {
 			return dedent(pv.req.PreScript)
 		}
 		return "// pre-request script\n// request.headers[\"X-Custom\"] = \"value\";\n"
+	case partJQ:
+		if len(pv.req.JQFilters) > 0 {
+			return strings.Join(pv.req.JQFilters, "\n") + "\n"
+		}
+		return "# @jq filters — one filter per line\n# .items[] | select(.active == true)\n"
 	case partPostScript:
 		if pv.req.PostScript != "" {
 			return dedent(pv.req.PostScript)
@@ -405,6 +417,16 @@ func (pv PartsView) applyEdit(kind int, content string) error {
 		return writer.SaveRequestLines(pv.path, pv.req.Name, method, url, headers, body)
 	case partPreScript:
 		return writer.SaveScript(pv.path, pv.req.Name, "pre-request", content)
+	case partJQ:
+		var filters []string
+		for _, line := range strings.Split(content, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			filters = append(filters, line)
+		}
+		return writer.SaveJQFilters(pv.path, pv.req.Name, filters)
 	case partPostScript:
 		return writer.SaveScript(pv.path, pv.req.Name, "post-response", content)
 	case partExample:
@@ -431,6 +453,15 @@ func (pv PartsView) previewContent() string {
 			return styleDim.Render("(empty — press e to create)")
 		}
 		return highlightHTTP(fmt.Sprintf("@pre-request {%%\n%s\n%%}", pv.req.PreScript))
+	case partJQ:
+		if len(pv.req.JQFilters) == 0 {
+			return styleDim.Render("(empty — press e to add filters)")
+		}
+		var b strings.Builder
+		for _, f := range pv.req.JQFilters {
+			fmt.Fprintf(&b, "@jq %s\n", f)
+		}
+		return highlightHTTP(b.String())
 	case partPostScript:
 		if pv.req.PostScript == "" {
 			return styleDim.Render("(empty — press e to create)")
@@ -506,7 +537,7 @@ func (pv PartsView) buildLeftLines(w, h int) []string {
 	return lines
 }
 
-func (pv PartsView) partLabels() [4]string {
+func (pv PartsView) partLabels() [5]string {
 	reqLabel := pv.req.Method + " " + pv.req.URL
 	if pv.req.Name != "" {
 		reqLabel = pv.req.Method + " " + pv.req.Name
@@ -515,6 +546,16 @@ func (pv PartsView) partLabels() [4]string {
 	preLabel := "@pre-request"
 	if pv.req.PreScript == "" {
 		preLabel += " (empty)"
+	}
+
+	jqLabel := "@jq"
+	switch len(pv.req.JQFilters) {
+	case 0:
+		jqLabel += " (empty)"
+	case 1:
+		jqLabel += " (1 filter)"
+	default:
+		jqLabel += fmt.Sprintf(" (%d filters)", len(pv.req.JQFilters))
 	}
 
 	postLabel := "@post-response"
@@ -527,7 +568,7 @@ func (pv PartsView) partLabels() [4]string {
 		exLabel += " (empty)"
 	}
 
-	return [4]string{reqLabel, preLabel, postLabel, exLabel}
+	return [5]string{reqLabel, preLabel, jqLabel, postLabel, exLabel}
 }
 
 func (pv PartsView) statusLine() string {

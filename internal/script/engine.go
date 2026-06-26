@@ -116,6 +116,17 @@ func setPostContext(vm *goja.Runtime, ctx *PostContext) {
 		return vm.ToValue(data)
 	})
 
+	// response.jq: parsed JSON from the last @jq filter, or the raw string if
+	// the output isn't valid JSON. Undefined when no @jq filter was applied.
+	if ctx.Response.JQOutput != "" {
+		var jqData interface{}
+		if err := json.Unmarshal([]byte(ctx.Response.JQOutput), &jqData); err == nil {
+			_ = respObj.Set("jq", vm.ToValue(jqData))
+		} else {
+			_ = respObj.Set("jq", vm.ToValue(ctx.Response.JQOutput))
+		}
+	}
+
 	_ = vm.Set("response", respObj)
 
 	envObj := vm.NewObject()

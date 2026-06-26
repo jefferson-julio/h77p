@@ -151,7 +151,7 @@ func highlightHTTP(src string) string {
 				bodyBuf = append(bodyBuf, raw)
 			}
 		case modeReqBody:
-			if isBlockTag(trimmed) || strings.HasPrefix(trimmed, "###") {
+			if isBlockTag(trimmed) || strings.HasPrefix(trimmed, "###") || strings.HasPrefix(trimmed, "@jq ") {
 				flushBody()
 				colored, next := colorLineNormal(raw, trimmed)
 				out = append(out, colored)
@@ -215,8 +215,8 @@ func colorLine(raw string, state hlState) (string, hlState) {
 		return colorHeader(raw), next
 
 	case modeReqHeaders:
-		// Block tags and ### separators end request-header context.
-		if isBlockTag(trimmed) || strings.HasPrefix(trimmed, "###") {
+		// Block tags, ### separators, and @jq lines end request-header context.
+		if isBlockTag(trimmed) || strings.HasPrefix(trimmed, "###") || strings.HasPrefix(trimmed, "@jq ") {
 			return colorLineNormal(raw, trimmed)
 		}
 		if trimmed == "" {
@@ -252,6 +252,10 @@ func colorLineNormal(raw, trimmed string) (string, hlState) {
 
 	case trimmed == "%}":
 		return clrDelim.Render(raw), hlState{}
+
+	case strings.HasPrefix(trimmed, "@jq "):
+		filter := strings.TrimSpace(strings.TrimPrefix(trimmed, "@jq "))
+		return clrKeyword.Render("@jq") + " " + colorizeTokens(filter, clrURL), hlState{}
 
 	case strings.HasPrefix(trimmed, "@") && !isBlockTag(trimmed) && strings.Contains(trimmed, "="):
 		// Variable declaration: @name = value (file-level or request-level)

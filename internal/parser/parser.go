@@ -135,6 +135,11 @@ func (p *p) parseRequest(name string) (httpfile.Request, error) {
 			}
 			req.Example = ex
 
+		case strings.HasPrefix(line, "@jq "):
+			p.pos++
+			filter := strings.TrimSpace(strings.TrimPrefix(line, "@jq "))
+			req.JQFilters = append(req.JQFilters, filter)
+
 		case strings.HasPrefix(line, "@") && !isBlockTag(line):
 			p.pos++
 			if v, err := parseVarDecl(line); err == nil {
@@ -184,7 +189,7 @@ func (p *p) parseHeadersAndBody() ([]httpfile.Header, string, error) {
 	for !p.eof() {
 		raw := p.peek()
 		line := strings.TrimSpace(raw)
-		if line == "" || isBlockTag(line) || strings.HasPrefix(line, "###") {
+		if line == "" || isBlockTag(line) || strings.HasPrefix(line, "###") || strings.HasPrefix(line, "@jq ") {
 			break
 		}
 		p.pos++
@@ -205,7 +210,7 @@ func (p *p) parseHeadersAndBody() ([]httpfile.Header, string, error) {
 		for !p.eof() {
 			raw := p.peek()
 			line := strings.TrimSpace(raw)
-			if isBlockTag(line) || strings.HasPrefix(line, "###") {
+			if isBlockTag(line) || strings.HasPrefix(line, "###") || strings.HasPrefix(line, "@jq ") {
 				break
 			}
 			p.pos++

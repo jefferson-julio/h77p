@@ -20,6 +20,7 @@ type Request struct {
 	Headers    []Header
 	Body       string
 	PreScript  string
+	JQFilters  []string // @jq lines — applied to response body in order
 	PostScript string
 	Example    *Example
 }

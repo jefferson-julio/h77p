@@ -26,6 +26,7 @@ type ScriptResponse struct {
 	Headers    map[string]string
 	Body       string
 	Duration   int64
+	JQOutput   string // result of @jq filters; empty if none applied
 }
 
 type TestResult struct {

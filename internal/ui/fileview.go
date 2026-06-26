@@ -480,6 +480,9 @@ func (fv FileView) handleRequestDone(msg requestDoneMsg) (FileView, tea.Cmd) {
 		h := msg.result.HTTP
 		req := fv.file.Requests[fv.filtered[fv.cursor]]
 		ex := httpResultToExample(h)
+		if msg.result.JQOutput != "" {
+			ex.Body = msg.result.JQOutput
+		}
 		if err := writer.SaveExample(fv.file.Path, req.Name, ex); err != nil {
 			fv.statusMsg += "  (save failed: " + err.Error() + ")"
 		} else {
@@ -676,6 +679,7 @@ func renderExample(req httpfile.Request) string {
 }
 
 // renderHTTPResult shows just the HTTP response (status, headers, body) without tests.
+// When @jq filters were applied, the transformed body is shown instead of the raw one.
 func renderHTTPResult(result *runner.Result) string {
 	if result == nil {
 		return styleDim.Render("(no run yet — press r to run)")
@@ -694,7 +698,12 @@ func renderHTTPResult(result *runner.Result) string {
 	for _, k := range keys {
 		b.WriteString(colorHeader(k+": "+strings.Join(h.Headers[k], ", ")) + "\n")
 	}
-	if h.Body != "" {
+	if result.JQOutput != "" {
+		b.WriteString("\n")
+		b.WriteString(styleDim.Render("[@jq]") + "\n")
+		b.WriteString(colorJSON(result.JQOutput))
+		b.WriteString("\n")
+	} else if h.Body != "" {
 		b.WriteString("\n")
 		b.WriteString(highlightBodyFromHeaders(h.Body, h.Headers))
 		b.WriteString("\n")
@@ -793,6 +802,9 @@ func renderRequest(req httpfile.Request) string {
 	}
 	if req.Body != "" {
 		fmt.Fprintf(&b, "\n%s\n", req.Body)
+	}
+	for _, filter := range req.JQFilters {
+		fmt.Fprintf(&b, "@jq %s\n", filter)
 	}
 	if req.PostScript != "" {
 		fmt.Fprintf(&b, "\n@post-response {%%\n%s\n%%}\n", req.PostScript)

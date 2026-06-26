@@ -26,6 +26,94 @@ func SetVariable(path, name, value string) error {
 	return nil
 }
 
+// SaveJQFilters replaces all @jq lines for the named request with filters.
+// An empty slice removes all @jq lines.
+func SaveJQFilters(path, requestName string, filters []string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	updated, err := upsertJQFilters(string(data), requestName, filters)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(updated), 0o644)
+}
+
+func upsertJQFilters(src, requestName string, filters []string) (string, error) {
+	src = strings.ReplaceAll(src, "\r\n", "\n")
+	lines := strings.Split(src, "\n")
+
+	blockStart, blockEnd, err := findSection(lines, requestName)
+	if err != nil {
+		return src, err
+	}
+
+	// Rebuild block without @jq lines, collapsing consecutive blank lines so we
+	// don't leave behind orphaned blank lines where @jq entries used to be.
+	var stripped []string
+	prevBlank := false
+	for _, line := range lines[blockStart:blockEnd] {
+		if strings.HasPrefix(strings.TrimSpace(line), "@jq ") {
+			continue
+		}
+		isBlank := strings.TrimSpace(line) == ""
+		if isBlank && prevBlank {
+			continue
+		}
+		stripped = append(stripped, line)
+		prevBlank = isBlank
+	}
+	// Remove trailing blank lines from the stripped block.
+	for len(stripped) > 1 && strings.TrimSpace(stripped[len(stripped)-1]) == "" {
+		stripped = stripped[:len(stripped)-1]
+	}
+
+	if len(filters) == 0 {
+		result := append(lines[:blockStart:blockStart], stripped...)
+		result = append(result, lines[blockEnd:]...)
+		return strings.Join(result, "\n"), nil
+	}
+
+	// Find insertion point: before @post-response {%, @example {%, or end of block.
+	insertAt := len(stripped)
+	for i, line := range stripped {
+		t := strings.TrimSpace(line)
+		if t == "@post-response {%" || t == "@example {%" {
+			insertAt = i
+			break
+		}
+	}
+	// Retract past any blank lines sitting just before the insertion point.
+	for insertAt > 1 && strings.TrimSpace(stripped[insertAt-1]) == "" {
+		insertAt--
+	}
+	// Skip blank lines that immediately follow the insertion point so we don't
+	// double-up when we add our own blank separator below.
+	afterAt := insertAt
+	for afterAt < len(stripped) && strings.TrimSpace(stripped[afterAt]) == "" {
+		afterAt++
+	}
+
+	var jqLines []string
+	for _, f := range filters {
+		jqLines = append(jqLines, "@jq "+f)
+	}
+
+	newBlock := make([]string, 0, len(stripped)+len(jqLines)+2)
+	newBlock = append(newBlock, stripped[:insertAt]...)
+	newBlock = append(newBlock, "")
+	newBlock = append(newBlock, jqLines...)
+	if afterAt < len(stripped) {
+		newBlock = append(newBlock, "")
+		newBlock = append(newBlock, stripped[afterAt:]...)
+	}
+
+	result := append(lines[:blockStart:blockStart], newBlock...)
+	result = append(result, lines[blockEnd:]...)
+	return strings.Join(result, "\n"), nil
+}
+
 var httpMethods = map[string]bool{
 	"GET": true, "POST": true, "PUT": true, "PATCH": true,
 	"DELETE": true, "HEAD": true, "OPTIONS": true, "TRACE": true, "CONNECT": true,
@@ -235,11 +323,12 @@ func upsertRequestLines(src, requestName, method, url string, headers []httpfile
 		return src, fmt.Errorf("no HTTP method line found in request %q", requestName)
 	}
 
-	// Find the end of the request content (headers + body), stopping at any block tag or ###.
+	// Find the end of the request content (headers + body), stopping at block tags,
+	// @jq lines, or the next ### separator.
 	reqEnd := methodLine + 1
 	for reqEnd < blockEnd {
 		t := strings.TrimSpace(lines[reqEnd])
-		if isHTTPBlockTag(t) || strings.HasPrefix(t, "###") {
+		if isHTTPBlockTag(t) || strings.HasPrefix(t, "###") || strings.HasPrefix(t, "@jq ") {
 			break
 		}
 		reqEnd++

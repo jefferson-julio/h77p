@@ -3,7 +3,9 @@ package runner
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/jefferson-julio/h77p/internal/envfile"
 	"github.com/jefferson-julio/h77p/internal/executor"
@@ -12,12 +14,13 @@ import (
 )
 
 type Result struct {
-	Request *httpfile.Request
-	HTTP    *executor.Result
-	Tests   []*script.TestResult
-	Passed  bool
-	Err     error
-	Logs    []string
+	Request  *httpfile.Request
+	HTTP     *executor.Result
+	Tests    []*script.TestResult
+	Passed   bool
+	Err      error
+	Logs     []string
+	JQOutput string // result of @jq filters applied to response body; empty if none/failed
 }
 
 // Run executes a single named request from file. If requestName is empty the
@@ -103,10 +106,25 @@ func runOne(req *httpfile.Request, vars map[string]string) (*Result, error) {
 		return &Result{Request: req, Err: err, Logs: logs}, nil
 	}
 
+	// Apply @jq filters to the response body when the response is JSON.
+	var jqOutput string
+	if len(req.JQFilters) > 0 {
+		if isJSONResponse(httpResult) {
+			var jqErr error
+			jqOutput, jqErr = applyJQFilters(httpResult.Body, req.JQFilters)
+			if jqErr != nil {
+				logs = append(logs, "jq: "+jqErr.Error())
+			}
+		} else {
+			logs = append(logs, "jq: skipped — response is not JSON")
+		}
+	}
+
 	result := &Result{
-		Request: req,
-		HTTP:    httpResult,
-		Passed:  true,
+		Request:  req,
+		HTTP:     httpResult,
+		Passed:   true,
+		JQOutput: jqOutput,
 	}
 
 	if req.PostScript != "" {
@@ -123,6 +141,7 @@ func runOne(req *httpfile.Request, vars map[string]string) (*Result, error) {
 				Headers:    flattenHeaders(httpResult.Headers),
 				Body:       httpResult.Body,
 				Duration:   httpResult.Duration.Milliseconds(),
+				JQOutput:   jqOutput,
 			},
 			Env: vars,
 		}
@@ -193,4 +212,35 @@ func seedFileVars(file *httpfile.File, vars map[string]string) {
 	for _, v := range file.Variables {
 		vars[v.Name] = v.Value
 	}
+}
+
+// isJSONResponse returns true when the HTTP response has a JSON Content-Type.
+func isJSONResponse(r *executor.Result) bool {
+	for _, vs := range r.Headers {
+		for _, v := range vs {
+			if strings.Contains(strings.ToLower(v), "application/json") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// applyJQFilters runs each filter through the jq binary in sequence, piping
+// the output of one filter as the input of the next. Returns the final output.
+func applyJQFilters(body string, filters []string) (string, error) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		return "", fmt.Errorf("jq not found in PATH")
+	}
+	current := body
+	for _, filter := range filters {
+		cmd := exec.Command("jq", filter)
+		cmd.Stdin = strings.NewReader(current)
+		out, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("filter %q: %w", filter, err)
+		}
+		current = strings.TrimRight(string(out), "\n")
+	}
+	return current, nil
 }
