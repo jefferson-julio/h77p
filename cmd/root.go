@@ -8,10 +8,15 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "h77p",
+	Use:   "h77p [file.http]",
 	Short: "A terminal HTTP client driven by .http files",
-	// Running h77p with no subcommand launches the TUI at the current directory.
+	Args:  cobra.MaximumNArgs(1),
+	// Running h77p with no args launches the TUI browser at the current directory.
+	// Running h77p <file.http> opens that file directly in the TUI file view.
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 1 {
+			return ui.StartAtFile(args[0])
+		}
 		cwd, err := os.Getwd()
 		if err != nil {
 			return err

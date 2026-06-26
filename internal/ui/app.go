@@ -102,12 +102,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		pv = pv.withSyncedPreview()
 		m.partsView = pv
 		m.mode = modePartsView
-		return m, nil
+		return m, pv.watchCmd()
 
 	case backMsg:
 		switch m.mode {
 		case modePartsView:
 			m.mode = modeFileView
+			// Stop the PartsView watcher before restarting the FileView watcher.
+			if m.partsView.watchDone != nil {
+				close(m.partsView.watchDone)
+				m.partsView.watchDone = nil
+			}
 			// Carry run state back so FileView reflects any runs done in PartsView.
 			m.fileView.lastResult = m.partsView.lastResult
 			m.fileView.activeTab = m.partsView.activeTab

@@ -25,6 +25,7 @@ const (
 	tabRun
 	tabTests
 	tabLogs
+	tabExample
 )
 
 // fileChangedMsg is sent when the watched .http file is modified on disk.
@@ -38,6 +39,35 @@ type requestDoneMsg struct {
 	result *runner.Result
 	action string // "run" | "test" | "example"
 	err    error
+}
+
+// bodyViewerDoneMsg is sent after an external body viewer process exits.
+type bodyViewerDoneMsg struct{ err error }
+
+// cmdOpenBody suspends the TUI and opens body in the first available viewer
+// (otree → jless → less). The body is fed via stdin so the program can open
+// /dev/tty itself for keyboard navigation.
+func cmdOpenBody(body string) tea.Cmd {
+	if body == "" {
+		return nil
+	}
+	var program string
+	for _, name := range []string{"otree", "jless", "less"} {
+		if _, err := exec.LookPath(name); err == nil {
+			program = name
+			break
+		}
+	}
+	if program == "" {
+		return func() tea.Msg {
+			return bodyViewerDoneMsg{err: fmt.Errorf("no body viewer found (tried: otree, jless, less)")}
+		}
+	}
+	cmd := exec.Command(program)
+	cmd.Stdin = strings.NewReader(body)
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return bodyViewerDoneMsg{err: err}
+	})
 }
 
 // FileView is the .http file inspector sub-model. Left panel lists requests
@@ -60,7 +90,7 @@ type FileView struct {
 	activeTab  int            // which right-panel tab is shown (tabRequest…tabLogs)
 
 	watchDone    chan struct{} // closed to stop the poll goroutine when leaving this view
-	watchModTime time.Time    // last known file mod time; poll compares against this
+	watchModTime time.Time     // last known file mod time; poll compares against this
 }
 
 func newFileView(path string, w, h int) (FileView, error) {
@@ -135,6 +165,8 @@ func (fv FileView) withSyncedPreview() FileView {
 		fv.preview.SetContent(renderTests(fv.lastResult))
 	case tabLogs:
 		fv.preview.SetContent(renderLogs(fv.lastResult))
+	case tabExample:
+		fv.preview.SetContent(renderExample(fv.file.Requests[reqIdx]))
 	default: // tabRequest
 		fv.preview.SetContent(renderRequest(fv.file.Requests[reqIdx]))
 	}
@@ -174,6 +206,14 @@ func (fv FileView) update(msg tea.Msg) (FileView, tea.Cmd) {
 	// Handle external editor finishing.
 	if done, ok := msg.(editFileDoneMsg); ok {
 		return fv.handleEditFileDone(done)
+	}
+
+	// Handle external body viewer finishing.
+	if done, ok := msg.(bodyViewerDoneMsg); ok {
+		if done.err != nil {
+			fv.statusMsg = "viewer: " + done.err.Error()
+		}
+		return fv, nil
 	}
 
 	key, ok := msg.(tea.KeyMsg)
@@ -216,30 +256,29 @@ func (fv FileView) update(msg tea.Msg) (FileView, tea.Cmd) {
 	case "4":
 		fv.activeTab = tabLogs
 		fv = fv.withSyncedPreview()
+	case "5":
+		fv.activeTab = tabExample
+		fv = fv.withSyncedPreview()
 	case "tab":
-		fv.activeTab = (fv.activeTab + 1) % 4
+		fv.activeTab = (fv.activeTab + 1) % 5
 		fv = fv.withSyncedPreview()
 
 	case "j", "down":
 		if fv.cursor < n-1 {
 			fv.cursor++
-			fv.activeTab = tabRequest
 			fv = fv.withScrollAdjusted().withSyncedPreview()
 		}
 	case "k", "up":
 		if fv.cursor > 0 {
 			fv.cursor--
-			fv.activeTab = tabRequest
 			fv = fv.withScrollAdjusted().withSyncedPreview()
 		}
 	case "g":
 		fv.cursor = 0
-		fv.activeTab = tabRequest
 		fv = fv.withScrollAdjusted().withSyncedPreview()
 	case "G":
 		if n > 0 {
 			fv.cursor = n - 1
-			fv.activeTab = tabRequest
 			fv = fv.withScrollAdjusted().withSyncedPreview()
 		}
 
@@ -254,6 +293,20 @@ func (fv FileView) update(msg tea.Msg) (FileView, tea.Cmd) {
 			return fv, func() tea.Msg {
 				return openPartsMsg{path: file.Path, file: file, req: req}
 			}
+		}
+
+	case "o":
+		body := ""
+		if fv.lastResult != nil && fv.lastResult.HTTP != nil {
+			body = fv.lastResult.HTTP.Body
+		}
+		if body == "" && n > 0 {
+			if req := fv.file.Requests[fv.filtered[fv.cursor]]; req.Example != nil {
+				body = req.Example.Body
+			}
+		}
+		if body != "" {
+			return fv, cmdOpenBody(body)
 		}
 
 	case "r":
@@ -449,7 +502,6 @@ func (fv FileView) view() string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, fv.statusLine())
 }
 
-
 func (fv FileView) buildLeftLines(w, h int) []string {
 	lines := make([]string, h)
 	blank := strings.Repeat(" ", w)
@@ -508,7 +560,7 @@ func (fv FileView) statusLine() string {
 		return styleStatusBar.Width(fv.width).Render(fv.statusMsg)
 	}
 
-	hint := "1-4/tab switch tab  enter/l inspect  r run  t test  e edit file  E edit req  x save example  j/k move  g/G top/bot  ctrl+d/u scroll  / search  h/esc back  q quit"
+	hint := "1-5/tab switch tab  enter/l inspect  r run  t test  o open body  e edit file  E edit req  x save example  j/k move  g/G top/bot  ctrl+d/u scroll  / search  h/esc back  q quit"
 	if fv.statusMsg != "" {
 		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("[" + fv.statusMsg + "]")
 		hint = tag + "  " + hint
@@ -583,6 +635,24 @@ func cmdPollFile(path string, modTime time.Time, done <-chan struct{}) tea.Cmd {
 			}
 		}
 	}
+}
+
+// renderExample shows the @example block for a request, syntax-highlighted.
+func renderExample(req httpfile.Request) string {
+	if req.Example == nil {
+		return styleDim.Render("(no @example — run the request and press x to save one)")
+	}
+	ex := req.Example
+	var b strings.Builder
+	fmt.Fprintf(&b, "@example {%%\n%s\n", ex.Status)
+	for _, h := range ex.Headers {
+		fmt.Fprintf(&b, "%s: %s\n", h.Name, h.Value)
+	}
+	if ex.Body != "" {
+		fmt.Fprintf(&b, "\n%s\n", ex.Body)
+	}
+	b.WriteString("%}")
+	return highlightHTTP(b.String())
 }
 
 // renderHTTPResult shows just the HTTP response (status, headers, body) without tests.

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -49,21 +50,54 @@ type PartsView struct {
 	working    bool
 	lastResult *runner.Result
 	activeTab  int
+
+	watchDone    chan struct{}
+	watchModTime time.Time
 }
 
 func newPartsView(path string, file *httpfile.File, req httpfile.Request, w, h int) PartsView {
 	pw := max(rightWidth(w), 1)
 	ph := max(contentHeight(h)-1, 1) // -1 for tab bar
 	pv := PartsView{
-		path:    path,
-		file:    file,
-		req:     req,
-		preview: viewport.New(pw, ph),
-		width:   w,
-		height:  h,
+		path:      path,
+		file:      file,
+		req:       req,
+		preview:   viewport.New(pw, ph),
+		width:     w,
+		height:    h,
+		watchDone: make(chan struct{}),
+	}
+	if info, err := os.Stat(path); err == nil {
+		pv.watchModTime = info.ModTime()
 	}
 	pv.preview.SetContent(pv.previewContent())
 	return pv
+}
+
+// watchCmd starts the file-change poll goroutine for PartsView.
+func (pv PartsView) watchCmd() tea.Cmd {
+	if pv.watchDone == nil {
+		return nil
+	}
+	return cmdPollFile(pv.path, pv.watchModTime, pv.watchDone)
+}
+
+// handleFileChanged reloads the .http file and updates the active request.
+func (pv PartsView) handleFileChanged() (PartsView, tea.Cmd) {
+	if updated, err := parser.ParseFile(pv.path); err == nil {
+		pv.file = updated
+		for _, r := range updated.Requests {
+			if r.Name == pv.req.Name {
+				pv.req = r
+				break
+			}
+		}
+		pv = pv.withSyncedPreview()
+	}
+	if info, err := os.Stat(pv.path); err == nil {
+		pv.watchModTime = info.ModTime()
+	}
+	return pv, cmdPollFile(pv.path, pv.watchModTime, pv.watchDone)
 }
 
 func (pv PartsView) withSyncedPreview() PartsView {
@@ -74,6 +108,8 @@ func (pv PartsView) withSyncedPreview() PartsView {
 		pv.preview.SetContent(renderTests(pv.lastResult))
 	case tabLogs:
 		pv.preview.SetContent(renderLogs(pv.lastResult))
+	case tabExample:
+		pv.preview.SetContent(renderExample(pv.req))
 	default: // tabRequest
 		pv.preview.SetContent(pv.previewContent())
 	}
@@ -94,6 +130,15 @@ func (pv PartsView) update(msg tea.Msg) (PartsView, tea.Cmd) {
 	}
 	if done, ok := msg.(requestDoneMsg); ok {
 		return pv.handleRequestDone(done)
+	}
+	if done, ok := msg.(bodyViewerDoneMsg); ok {
+		if done.err != nil {
+			pv.status = "viewer: " + done.err.Error()
+		}
+		return pv, nil
+	}
+	if _, ok := msg.(fileChangedMsg); ok {
+		return pv.handleFileChanged()
 	}
 
 	key, ok := msg.(tea.KeyMsg)
@@ -116,24 +161,37 @@ func (pv PartsView) update(msg tea.Msg) (PartsView, tea.Cmd) {
 	case "4":
 		pv.activeTab = tabLogs
 		pv = pv.withSyncedPreview()
+	case "5":
+		pv.activeTab = tabExample
+		pv = pv.withSyncedPreview()
 	case "tab":
-		pv.activeTab = (pv.activeTab + 1) % 4
+		pv.activeTab = (pv.activeTab + 1) % 5
 		pv = pv.withSyncedPreview()
 
 	case "j", "down":
 		if pv.cursor < 3 {
 			pv.cursor++
-			pv.activeTab = tabRequest
 			pv = pv.withSyncedPreview()
 		}
 	case "k", "up":
 		if pv.cursor > 0 {
 			pv.cursor--
-			pv.activeTab = tabRequest
 			pv = pv.withSyncedPreview()
 		}
 	case "e", "enter", "l":
 		return pv, pv.cmdEdit()
+	case "o":
+		body := ""
+		if pv.lastResult != nil && pv.lastResult.HTTP != nil {
+			body = pv.lastResult.HTTP.Body
+		}
+		if body == "" && pv.req.Example != nil {
+			body = pv.req.Example.Body
+		}
+		if body != "" {
+			return pv, cmdOpenBody(body)
+		}
+
 	case "r":
 		if !pv.working {
 			pv.working = true
@@ -455,7 +513,7 @@ func (pv PartsView) statusLine() string {
 	if pv.working {
 		return styleStatusBar.Width(pv.width).Render(pv.status)
 	}
-	hint := "1-4/tab switch tab  e edit  r run  t test  x save example  j/k move  h/esc back  q quit"
+	hint := "1-5/tab switch tab  e edit  r run  t test  o open body  x save example  j/k move  h/esc back  q quit"
 	if pv.status != "" {
 		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("[" + pv.status + "]")
 		hint = tag + "  " + hint

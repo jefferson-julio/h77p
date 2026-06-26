@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/x/ansi"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type dirEntry struct {
@@ -20,13 +20,13 @@ type dirEntry struct {
 // Browser is the file-system navigator sub-model. It lists directories and
 // .http files, letting the user drill in (l/enter) or go up (h/-).
 type Browser struct {
-	cwd      string
-	entries  []dirEntry
-	cursor   int
+	cwd       string
+	entries   []dirEntry
+	cursor    int
 	scrollTop int // index of the first visible entry in the left panel
-	preview  string
-	width    int
-	height   int
+	preview   string
+	width     int
+	height    int
 
 	search   searchInput
 	filtered []int // indices into entries that pass the current filter

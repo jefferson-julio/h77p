@@ -78,7 +78,7 @@ func contentHeight(total int) int {
 
 // renderTabBar draws the four right-panel tabs and returns a line of width w.
 func renderTabBar(activeTab, w int) string {
-	labels := [4]string{"1 request", "2 run", "3 tests", "4 logs"}
+	labels := []string{"1 request", "2 run", "3 tests", "4 logs", "5 example"}
 	var parts []string
 	for i, label := range labels {
 		if i == activeTab {
