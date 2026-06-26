@@ -69,6 +69,7 @@ func (p *p) parse() (*httpfile.File, error) {
 		p.pos++
 		switch {
 		case line == "":
+		case strings.HasPrefix(line, "#"): // comment — skip
 		case strings.HasPrefix(line, "@import "):
 			imp := strings.TrimSpace(strings.TrimPrefix(line, "@import "))
 			file.Imports = append(file.Imports, imp)
@@ -109,6 +110,9 @@ func (p *p) parseRequest(name string) (httpfile.Request, error) {
 
 		switch {
 		case line == "":
+			p.pos++
+
+		case strings.HasPrefix(line, "#"): // comment — skip
 			p.pos++
 
 		case line == "@pre-request {%":
@@ -193,6 +197,9 @@ func (p *p) parseHeadersAndBody() ([]httpfile.Header, string, error) {
 			break
 		}
 		p.pos++
+		if strings.HasPrefix(line, "#") {
+			continue // comment — skip
+		}
 		name, value, ok := strings.Cut(line, ":")
 		if !ok {
 			continue

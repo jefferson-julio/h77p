@@ -219,6 +219,9 @@ func colorLine(raw string, state hlState) (string, hlState) {
 		if isBlockTag(trimmed) || strings.HasPrefix(trimmed, "###") || strings.HasPrefix(trimmed, "@jq ") {
 			return colorLineNormal(raw, trimmed)
 		}
+		if strings.HasPrefix(trimmed, "#") {
+			return styleDim.Render(raw), state // comment inside headers — stay in header mode
+		}
 		if trimmed == "" {
 			// Blank separator: transition into request body.
 			return raw, hlState{mode: modeReqBody, ctype: state.ctype}
@@ -242,6 +245,9 @@ func colorLineNormal(raw, trimmed string) (string, hlState) {
 	switch {
 	case strings.HasPrefix(trimmed, "###"):
 		return clrSection.Render(raw), hlState{}
+
+	case strings.HasPrefix(trimmed, "#"):
+		return styleDim.Render(raw), hlState{}
 
 	case trimmed == "@pre-request {%" || trimmed == "@post-response {%":
 		kw := strings.TrimSpace(strings.TrimSuffix(trimmed, "{%"))
