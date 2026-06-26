@@ -315,14 +315,17 @@ func buildLinesFromString(content string, w, h int) []string {
 }
 
 func (b Browser) statusLine() string {
+	bg := activeTheme.BgSubtle
+	base := lipgloss.NewStyle().Background(bg).Foreground(activeTheme.FgDim)
+	accent := lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color("220"))
+
 	if b.search.active {
-		return styleStatusBar.Width(b.width).Render(b.search.renderPrompt())
+		return renderStatusBar(bg, b.search.renderPrompt(), b.width)
 	}
-	hint := "j/k move  enter open  h/- up  / search  ? help"
+	hint := base.Render("j/k move  enter open  h/- up  / search  ? help")
 	if b.search.query != "" {
-		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).
-			Render(fmt.Sprintf("[/%s]", b.search.query))
-		hint = tag + "  " + hint
+		tag := accent.Render(fmt.Sprintf("[/%s]", b.search.query))
+		hint = tag + base.Render("  ") + hint
 	}
-	return styleStatusBar.Width(b.width).Render(hint)
+	return renderStatusBar(bg, hint, b.width)
 }

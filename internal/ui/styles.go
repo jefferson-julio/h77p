@@ -105,6 +105,21 @@ func renderTabBar(activeTab, w int) string {
 	return lipgloss.NewStyle().Width(w).Background(activeTheme.BgDimmer).Render(bar)
 }
 
+// renderStatusBar builds a full-width status bar line where every character has
+// the given background explicitly set. This avoids the lipgloss nesting problem
+// where an inner ANSI reset clears the outer background for subsequent text and
+// for the width-filling padding that the outer Render() appends.
+func renderStatusBar(bg lipgloss.Color, content string, width int) string {
+	base := lipgloss.NewStyle().Background(bg)
+	leftPad := base.Render(" ")
+	vw := 1 + lipgloss.Width(content)
+	rightFill := ""
+	if width > vw {
+		rightFill = base.Render(strings.Repeat(" ", width-vw))
+	}
+	return leftPad + content + rightFill
+}
+
 // truncate shortens s to maxWidth runes, appending "…" if cut.
 func truncate(s string, maxWidth int) string {
 	runes := []rune(s)

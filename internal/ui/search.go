@@ -73,24 +73,31 @@ func (s searchInput) handleKey(key tea.KeyMsg) searchInput {
 
 // renderPrompt renders "/ query" with a block cursor at the current position.
 // Intended for display inside a status bar while active == true.
+// Every span explicitly carries the status bar background so there are no
+// transparent gaps when the result is embedded in a status bar line.
 func (s searchInput) renderPrompt() string {
+	bg := activeTheme.BgSubtle
+	base := lipgloss.NewStyle().Background(bg)
 	r := []rune(s.query)
-	before := string(r[:s.pos])
+
+	slash := base.Bold(true).Foreground(lipgloss.Color("220")).Render("/")
+	// Merge the " " separator with `before` so the gap between "/" and the
+	// query text also carries the background.
+	before := base.Render(" " + string(r[:s.pos]))
 
 	var cur, after string
 	if s.pos < len(r) {
-		// Cursor sits on a character — highlight it.
+		// Cursor sits on a character — highlight it with inverted colours.
 		cur = lipgloss.NewStyle().
 			Background(lipgloss.Color("220")).Foreground(lipgloss.Color("0")).
 			Render(string(r[s.pos : s.pos+1]))
-		after = string(r[s.pos+1:])
+		after = base.Render(string(r[s.pos+1:]))
 	} else {
 		// Cursor is past the end — show a block.
-		cur = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("█")
+		cur = base.Foreground(lipgloss.Color("220")).Render("█")
 	}
 
-	slash := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220")).Render("/")
-	return slash + " " + before + cur + after
+	return slash + before + cur + after
 }
 
 func isWordRune(r rune) bool {

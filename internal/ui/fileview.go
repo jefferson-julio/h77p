@@ -576,24 +576,33 @@ func (fv FileView) buildLeftLines(w, h int) []string {
 }
 
 func (fv FileView) statusLine() string {
+	bg := activeTheme.BgSubtle
+	base := lipgloss.NewStyle().Background(bg).Foreground(activeTheme.FgDim)
+	accent := lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color("220"))
+	sep := base.Render("  ")
+
 	if fv.search.active {
-		return styleStatusBar.Width(fv.width).Render(fv.search.renderPrompt())
+		return renderStatusBar(bg, fv.search.renderPrompt(), fv.width)
 	}
 	if fv.working {
-		return styleStatusBar.Width(fv.width).Render(fv.statusMsg)
+		return renderStatusBar(bg, base.Render(fv.statusMsg), fv.width)
 	}
 
-	hint := "r run  e edit  enter inspect  / search  ? help"
+	hint := base.Render("r run  e edit  enter inspect  / search  ? help")
+	var prefixes []string
 	if fv.statusMsg != "" {
-		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("[" + fv.statusMsg + "]")
-		hint = tag + "  " + hint
+		prefixes = append(prefixes, accent.Render("["+fv.statusMsg+"]"))
 	}
 	if fv.search.query != "" {
-		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).
-			Render(fmt.Sprintf("[/%s]", fv.search.query))
-		hint = tag + "  " + hint
+		prefixes = append(prefixes, accent.Render("[/"+fv.search.query+"]"))
 	}
-	return styleStatusBar.Width(fv.width).Render(hint)
+	var content string
+	if len(prefixes) > 0 {
+		content = strings.Join(append(prefixes, hint), sep)
+	} else {
+		content = hint
+	}
+	return renderStatusBar(bg, content, fv.width)
 }
 
 // handleFileChanged reloads the parsed file and tries to keep the cursor on the

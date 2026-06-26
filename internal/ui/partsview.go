@@ -572,15 +572,19 @@ func (pv PartsView) partLabels() [5]string {
 }
 
 func (pv PartsView) statusLine() string {
+	bg := activeTheme.BgSubtle
+	base := lipgloss.NewStyle().Background(bg).Foreground(activeTheme.FgDim)
+	accent := lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color("220"))
+
 	if pv.working {
-		return styleStatusBar.Width(pv.width).Render(pv.status)
+		return renderStatusBar(bg, base.Render(pv.status), pv.width)
 	}
-	hint := "e edit  r run  o open body  j/k parts  ? help"
+	hint := base.Render("e edit  r run  o open body  j/k parts  ? help")
 	if pv.status != "" {
-		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("[" + pv.status + "]")
-		hint = tag + "  " + hint
+		tag := accent.Render("[" + pv.status + "]")
+		hint = tag + base.Render("  ") + hint
 	}
-	return styleStatusBar.Width(pv.width).Render(hint)
+	return renderStatusBar(bg, hint, pv.width)
 }
 
 // dedent removes the common leading whitespace from all non-empty lines.
