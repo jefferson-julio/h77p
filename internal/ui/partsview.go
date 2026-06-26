@@ -52,6 +52,8 @@ type PartsView struct {
 	activeTab  int
 	helpOpen   bool
 
+	env          map[string]string // session variables: set() results persist here
+
 	watchDone    chan struct{}
 	watchModTime time.Time
 }
@@ -67,6 +69,7 @@ func newPartsView(path string, file *httpfile.File, req httpfile.Request, w, h i
 		width:     w,
 		height:    h,
 		watchDone: make(chan struct{}),
+		env:       make(map[string]string),
 	}
 	if info, err := os.Stat(path); err == nil {
 		pv.watchModTime = info.ModTime()
@@ -268,14 +271,20 @@ func (pv PartsView) cmdRun(action string) tea.Cmd {
 	}
 	file := pv.file
 	reqName := pv.req.Name
+	vars := copyEnv(pv.env) // copy so goroutine mutations don't race the main loop
 	return func() tea.Msg {
-		result, err := runner.Run(file, reqName, make(map[string]string))
-		return requestDoneMsg{result: result, action: action, err: err}
+		result, err := runner.Run(file, reqName, vars)
+		return requestDoneMsg{result: result, action: action, err: err, vars: vars}
 	}
 }
 
 func (pv PartsView) handleRequestDone(msg requestDoneMsg) (PartsView, tea.Cmd) {
 	pv.working = false
+
+	if msg.vars != nil {
+		pv.env = msg.vars
+	}
+
 	if msg.err != nil {
 		pv.status = "error: " + msg.err.Error()
 		return pv, nil

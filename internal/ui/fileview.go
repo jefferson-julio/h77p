@@ -39,6 +39,7 @@ type requestDoneMsg struct {
 	result *runner.Result
 	action string // "run" | "test" | "example"
 	err    error
+	vars   map[string]string // env after run (carries set() results back to caller)
 }
 
 // bodyViewerDoneMsg is sent after an external body viewer process exits.
@@ -84,10 +85,11 @@ type FileView struct {
 	search   searchInput
 	filtered []int // indices into file.Requests that pass the current filter
 
-	working    bool           // true while an HTTP request is in flight
-	statusMsg  string         // brief status shown in the bar after a run
-	lastResult *runner.Result // most recent completed result
-	activeTab  int            // which right-panel tab is shown (tabRequest…tabLogs)
+	working    bool              // true while an HTTP request is in flight
+	statusMsg  string            // brief status shown in the bar after a run
+	lastResult *runner.Result    // most recent completed result
+	activeTab  int               // which right-panel tab is shown (tabRequest…tabLogs)
+	env        map[string]string // session variables: set() results persist here
 	helpOpen   bool
 
 	watchDone    chan struct{} // closed to stop the poll goroutine when leaving this view
@@ -107,6 +109,7 @@ func newFileView(path string, w, h int) (FileView, error) {
 		width:     w,
 		height:    h,
 		watchDone: make(chan struct{}),
+		env:       make(map[string]string),
 	}
 	if info, err := os.Stat(path); err == nil {
 		fv.watchModTime = info.ModTime()
@@ -432,15 +435,20 @@ func (fv FileView) cmdRun(action string) tea.Cmd {
 	}
 	req := fv.file.Requests[fv.filtered[fv.cursor]]
 	file := fv.file
+	vars := copyEnv(fv.env) // copy so goroutine mutations don't race the main loop
 	return func() tea.Msg {
-		result, err := runner.Run(file, req.Name, make(map[string]string))
-		return requestDoneMsg{result: result, action: action, err: err}
+		result, err := runner.Run(file, req.Name, vars)
+		return requestDoneMsg{result: result, action: action, err: err, vars: vars}
 	}
 }
 
 // handleRequestDone processes an incoming requestDoneMsg.
 func (fv FileView) handleRequestDone(msg requestDoneMsg) (FileView, tea.Cmd) {
 	fv.working = false
+
+	if msg.vars != nil {
+		fv.env = msg.vars
+	}
 
 	if msg.err != nil {
 		fv.statusMsg = "error: " + msg.err.Error()

@@ -190,7 +190,13 @@ func upsertScript(src, requestName, kind, script string) (string, error) {
 
 func buildScriptBlock(kind, script string) []string {
 	block := []string{"@" + kind + " {%"}
-	block = append(block, strings.Split(script, "\n")...)
+	for _, line := range strings.Split(script, "\n") {
+		if strings.TrimSpace(line) == "" {
+			block = append(block, "")
+		} else {
+			block = append(block, "  "+line)
+		}
+	}
 	block = append(block, "%}")
 	return block
 }
@@ -326,13 +332,19 @@ func upsertExample(src, requestName string, ex *httpfile.Example) (string, error
 }
 
 func buildExampleBlock(ex *httpfile.Example) []string {
-	lines := []string{"@example {%", ex.Status}
+	lines := []string{"@example {%", "  " + ex.Status}
 	for _, h := range ex.Headers {
-		lines = append(lines, h.Name+": "+h.Value)
+		lines = append(lines, "  "+h.Name+": "+h.Value)
 	}
 	if ex.Body != "" {
 		lines = append(lines, "")
-		lines = append(lines, strings.Split(ex.Body, "\n")...)
+		for _, bodyLine := range strings.Split(ex.Body, "\n") {
+			if strings.TrimSpace(bodyLine) == "" {
+				lines = append(lines, "")
+			} else {
+				lines = append(lines, "  "+bodyLine)
+			}
+		}
 	}
 	lines = append(lines, "%}")
 	return lines

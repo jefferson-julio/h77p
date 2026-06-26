@@ -259,7 +259,7 @@ func (p *p) parseExampleBlock() (*httpfile.Example, error) {
 			p.pos++
 			bodyLines = append(bodyLines, raw)
 		}
-		ex.Body = trimTrailingBlank(bodyLines)
+		ex.Body = trimTrailingBlank(dedentLines(bodyLines))
 	} else if !p.eof() && strings.TrimSpace(p.peek()) == "%}" {
 		p.pos++ // no body; consume closing %}
 	}
@@ -309,4 +309,32 @@ func trimTrailingBlank(lines []string) string {
 		lines = lines[:len(lines)-1]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// dedentLines strips the minimum common leading whitespace from all non-empty
+// lines. This lets example bodies be indented in the file for readability
+// without the indent leaking into the stored/displayed content.
+func dedentLines(lines []string) []string {
+	minIndent := -1
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		n := len(line) - len(strings.TrimLeft(line, " \t"))
+		if minIndent < 0 || n < minIndent {
+			minIndent = n
+		}
+	}
+	if minIndent <= 0 {
+		return lines
+	}
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		if len(line) >= minIndent {
+			out[i] = line[minIndent:]
+		} else {
+			out[i] = line
+		}
+	}
+	return out
 }

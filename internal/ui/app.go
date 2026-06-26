@@ -29,6 +29,16 @@ type Model struct {
 	partsView PartsView
 	width     int
 	height    int
+	env       map[string]string // session variables — persist set() results across requests
+}
+
+// copyEnv returns a shallow copy of m, safe to pass to a goroutine.
+func copyEnv(m map[string]string) map[string]string {
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // New starts in browser mode at the given directory.
@@ -37,7 +47,7 @@ func New(cwd string) (Model, error) {
 	if err != nil {
 		return Model{}, err
 	}
-	return Model{mode: modeBrowser, browser: b}, nil
+	return Model{mode: modeBrowser, browser: b, env: make(map[string]string)}, nil
 }
 
 // NewAtFile starts directly in file-view mode for the given .http file.
@@ -53,7 +63,7 @@ func NewAtFile(path string) (Model, error) {
 	if err != nil {
 		return Model{}, err
 	}
-	return Model{mode: modeFileView, browser: b, fileView: fv}, nil
+	return Model{mode: modeFileView, browser: b, fileView: fv, env: make(map[string]string)}, nil
 }
 
 func (m Model) Init() tea.Cmd {
@@ -89,16 +99,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err != nil {
 			return m, nil
 		}
+		fv.env = copyEnv(m.env) // seed the file view with current session vars
 		m.fileView = fv
 		m.mode = modeFileView
 		return m, tea.Batch(fv.watchCmd(), tea.ClearScreen)
 
 	case openPartsMsg:
 		pv := newPartsView(msg.path, msg.file, msg.req, m.width, m.height)
-		// Carry run state from FileView so both views share the same context.
+		// Carry run state and env from FileView so both views share the same context.
 		pv.lastResult = m.fileView.lastResult
 		pv.activeTab = m.fileView.activeTab
 		pv.status = m.fileView.statusMsg
+		pv.env = copyEnv(m.fileView.env)
 		pv = pv.withSyncedPreview()
 		m.partsView = pv
 		m.mode = modePartsView
@@ -113,15 +125,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				close(m.partsView.watchDone)
 				m.partsView.watchDone = nil
 			}
-			// Carry run state back so FileView reflects any runs done in PartsView.
+			// Carry run state and env back so FileView reflects any runs done in PartsView.
 			m.fileView.lastResult = m.partsView.lastResult
 			m.fileView.activeTab = m.partsView.activeTab
 			m.fileView.statusMsg = m.partsView.status
+			m.fileView.env = m.partsView.env
+			m.env = m.partsView.env
 			m.fileView.watchDone = make(chan struct{})
 			var cmd tea.Cmd
 			m.fileView, cmd = m.fileView.handleFileChanged()
 			return m, tea.Batch(cmd, tea.ClearScreen)
 		default:
+			m.env = m.fileView.env // persist vars when leaving a file view
 			m.mode = modeBrowser
 		}
 		return m, tea.ClearScreen
