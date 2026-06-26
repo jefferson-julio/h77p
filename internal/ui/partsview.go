@@ -53,7 +53,9 @@ type PartsView struct {
 	activeTab  int
 	helpOpen   bool
 
-	env          map[string]string // session variables: set() results persist here
+	env      map[string]string // session variables: set() results persist here
+	envFocus  bool              // true when j/k scroll the env panel instead of the parts list
+	envScroll int               // index of the first visible row in the env panel
 
 	watchDone    chan struct{}
 	watchModTime time.Time
@@ -178,16 +180,19 @@ func (pv PartsView) update(msg tea.Msg) (PartsView, tea.Cmd) {
 		pv.activeTab = tabExample
 		pv = pv.withSyncedPreview()
 	case "tab":
-		pv.activeTab = (pv.activeTab + 1) % 5
-		pv = pv.withSyncedPreview()
+		pv.envFocus = !pv.envFocus
 
 	case "j", "down":
-		if pv.cursor < 4 {
+		if pv.envFocus {
+			pv = pv.envScrollBy(1)
+		} else if pv.cursor < 4 {
 			pv.cursor++
 			pv = pv.withSyncedPreview()
 		}
 	case "k", "up":
-		if pv.cursor > 0 {
+		if pv.envFocus {
+			pv = pv.envScrollBy(-1)
+		} else if pv.cursor > 0 {
 			pv.cursor--
 			pv = pv.withSyncedPreview()
 		}
@@ -231,6 +236,25 @@ func (pv PartsView) update(msg tea.Msg) (PartsView, tea.Cmd) {
 		return pv, cmd
 	}
 	return pv, nil
+}
+
+func (pv PartsView) envScrollBy(delta int) PartsView {
+	ch := max(contentHeight(pv.height), 1)
+	envH := envPanelHeight(ch)
+	visRows := max(envH-1, 0)
+	maxScroll := max(len(pv.env)-visRows, 0)
+	pv.envScroll += delta
+	if pv.envScroll < 0 {
+		pv.envScroll = 0
+	}
+	if pv.envScroll > maxScroll {
+		pv.envScroll = maxScroll
+	}
+	return pv
+}
+
+func (pv PartsView) buildEnvLines(w, h int) []string {
+	return renderEnvPanel(pv.env, pv.envFocus, pv.envScroll, w, h)
 }
 
 func (pv PartsView) cmdEdit() tea.Cmd {
@@ -287,6 +311,7 @@ func (pv PartsView) handleRequestDone(msg requestDoneMsg) (PartsView, tea.Cmd) {
 
 	if msg.vars != nil {
 		pv.env = msg.vars
+		pv.envScroll = 0
 	}
 
 	if msg.err != nil {
@@ -496,6 +521,8 @@ func (pv PartsView) view() string {
 	lw := leftWidth(pv.width)
 	rw := rightWidth(pv.width)
 	ch := max(contentHeight(pv.height), 1)
+	envH := envPanelHeight(ch)
+	partsH := ch - envH
 
 	title := pv.req.Name
 	if title == "" {
@@ -503,7 +530,7 @@ func (pv PartsView) view() string {
 	}
 	header := styleHeader.Width(pv.width).Render(title)
 
-	left := pv.buildLeftLines(lw, ch)
+	left := append(pv.buildLeftLines(lw, partsH), pv.buildEnvLines(lw, envH)...)
 	tabBar := renderTabBar(pv.activeTab, rw)
 	vpLines := strings.Split(pv.preview.View(), "\n")
 	right := append([]string{tabBar}, vpLines...)

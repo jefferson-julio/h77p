@@ -92,6 +92,9 @@ type FileView struct {
 	env        map[string]string // session variables: set() results persist here
 	helpOpen   bool
 
+	envFocus  bool // true when j/k navigate the env panel instead of the file list
+	envScroll int  // index of the first visible row in the env panel
+
 	watchDone    chan struct{} // closed to stop the poll goroutine when leaving this view
 	watchModTime time.Time     // last known file mod time; poll compares against this
 }
@@ -111,6 +114,7 @@ func newFileView(path string, w, h int) (FileView, error) {
 		watchDone: make(chan struct{}),
 		env:       make(map[string]string),
 	}
+	runner.SeedEnv(fv.file, fv.env)
 	if info, err := os.Stat(path); err == nil {
 		fv.watchModTime = info.ModTime()
 	}
@@ -185,15 +189,49 @@ func (fv FileView) resize(w, h int) FileView {
 	return fv
 }
 
-// withScrollAdjusted ensures scrollTop keeps the cursor within the visible window.
+// envPanelHeight returns the number of rows devoted to the env panel given the
+// total content height. Minimum 3 so the header + at least two vars show.
+func envPanelHeight(contentH int) int {
+	h := contentH * 3 / 10
+	if h < 3 {
+		h = 3
+	}
+	return h
+}
+
+// withScrollAdjusted ensures scrollTop keeps the cursor within the visible file list.
 func (fv FileView) withScrollAdjusted() FileView {
 	ch := max(contentHeight(fv.height), 1)
+	fh := ch - envPanelHeight(ch)
+	if fh < 1 {
+		fh = 1
+	}
 	if fv.cursor < fv.scrollTop {
 		fv.scrollTop = fv.cursor
-	} else if fv.cursor >= fv.scrollTop+ch {
-		fv.scrollTop = fv.cursor - ch + 1
+	} else if fv.cursor >= fv.scrollTop+fh {
+		fv.scrollTop = fv.cursor - fh + 1
 	}
 	return fv
+}
+
+// envScrollBy adjusts the env panel scroll position by delta, clamped to valid bounds.
+func (fv FileView) envScrollBy(delta int) FileView {
+	ch := max(contentHeight(fv.height), 1)
+	envH := envPanelHeight(ch)
+	visRows := max(envH-1, 0)
+	maxScroll := max(len(fv.env)-visRows, 0)
+	fv.envScroll += delta
+	if fv.envScroll < 0 {
+		fv.envScroll = 0
+	}
+	if fv.envScroll > maxScroll {
+		fv.envScroll = maxScroll
+	}
+	return fv
+}
+
+func (fv FileView) buildEnvLines(w, h int) []string {
+	return renderEnvPanel(fv.env, fv.envFocus, fv.envScroll, w, h)
 }
 
 func (fv FileView) update(msg tea.Msg) (FileView, tea.Cmd) {
@@ -272,24 +310,29 @@ func (fv FileView) update(msg tea.Msg) (FileView, tea.Cmd) {
 		fv.activeTab = tabExample
 		fv = fv.withSyncedPreview()
 	case "tab":
-		fv.activeTab = (fv.activeTab + 1) % 5
-		fv = fv.withSyncedPreview()
+		fv.envFocus = !fv.envFocus
 
 	case "j", "down":
-		if fv.cursor < n-1 {
+		if fv.envFocus {
+			fv = fv.envScrollBy(1)
+		} else if fv.cursor < n-1 {
 			fv.cursor++
 			fv = fv.withScrollAdjusted().withSyncedPreview()
 		}
 	case "k", "up":
-		if fv.cursor > 0 {
+		if fv.envFocus {
+			fv = fv.envScrollBy(-1)
+		} else if fv.cursor > 0 {
 			fv.cursor--
 			fv = fv.withScrollAdjusted().withSyncedPreview()
 		}
 	case "g":
-		fv.cursor = 0
-		fv = fv.withScrollAdjusted().withSyncedPreview()
+		if !fv.envFocus {
+			fv.cursor = 0
+			fv = fv.withScrollAdjusted().withSyncedPreview()
+		}
 	case "G":
-		if n > 0 {
+		if !fv.envFocus && n > 0 {
 			fv.cursor = n - 1
 			fv = fv.withScrollAdjusted().withSyncedPreview()
 		}
@@ -448,6 +491,7 @@ func (fv FileView) handleRequestDone(msg requestDoneMsg) (FileView, tea.Cmd) {
 
 	if msg.vars != nil {
 		fv.env = msg.vars
+		fv.envScroll = 0
 	}
 
 	if msg.err != nil {
@@ -509,6 +553,8 @@ func (fv FileView) view() string {
 	lw := leftWidth(fv.width)
 	rw := rightWidth(fv.width)
 	ch := max(contentHeight(fv.height), 1)
+	envH := envPanelHeight(ch)
+	fileH := ch - envH
 
 	name := "(no file)"
 	if fv.file != nil {
@@ -516,7 +562,7 @@ func (fv FileView) view() string {
 	}
 	header := styleHeader.Width(fv.width).Render(name)
 
-	left := fv.buildLeftLines(lw, ch)
+	left := append(fv.buildLeftLines(lw, fileH), fv.buildEnvLines(lw, envH)...)
 	tabBar := renderTabBar(fv.activeTab, rw)
 	vpLines := strings.Split(fv.preview.View(), "\n")
 	right := append([]string{tabBar}, vpLines...)
@@ -621,6 +667,7 @@ func (fv FileView) handleFileChanged() (FileView, tea.Cmd) {
 		}
 
 		fv.file = updated
+		runner.SeedEnv(fv.file, fv.env) // refresh file-level @var declarations
 		fv.filtered = fv.computeFiltered()
 
 		// Try to re-find the same request.

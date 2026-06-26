@@ -1,9 +1,12 @@
 package ui
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -103,6 +106,77 @@ func renderTabBar(activeTab, w int) string {
 	}
 	bar := strings.Join(parts, styleDivider.Render("│"))
 	return lipgloss.NewStyle().Width(w).Background(activeTheme.BgDimmer).Render(bar)
+}
+
+// renderEnvPanel renders the env state panel into exactly h rows of visual width w.
+// Row 0 is a focus-sensitive header; rows 1..h-1 are scrollable variable entries.
+// This is shared between FileView and PartsView.
+func renderEnvPanel(env map[string]string, focused bool, scroll, w, h int) []string {
+	lines := make([]string, h)
+	blank := strings.Repeat(" ", w)
+	for i := range lines {
+		lines[i] = blank
+	}
+	if h == 0 {
+		return lines
+	}
+
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	visRows := h - 1
+	scrollSuffix := ""
+	if len(keys) > visRows {
+		above := scroll > 0
+		below := scroll+visRows < len(keys)
+		switch {
+		case above && below:
+			scrollSuffix = " ↑↓"
+		case above:
+			scrollSuffix = " ↑"
+		case below:
+			scrollSuffix = " ↓"
+		}
+	}
+
+	var title string
+	if len(keys) == 0 {
+		title = "env"
+	} else {
+		title = fmt.Sprintf("env (%d)%s", len(keys), scrollSuffix)
+	}
+	if focused {
+		lines[0] = styleTabActive.Width(w).Render(title)
+	} else {
+		lines[0] = styleTabInactive.Width(w).Render(title)
+	}
+
+	if h <= 1 {
+		return lines
+	}
+
+	if len(keys) == 0 {
+		empty := ansi.Truncate("  "+styleDim.Render("(run a request to populate)"), w, "")
+		lines[1] = lipgloss.NewStyle().Width(w).Render(empty)
+		return lines
+	}
+
+	for screenIdx := 1; screenIdx < h; screenIdx++ {
+		dataIdx := scroll + screenIdx - 1
+		if dataIdx >= len(keys) {
+			break
+		}
+		k := keys[dataIdx]
+		v := env[k]
+		line := "  " + clrKeyword.Render(k) + styleDim.Render(" = ") + clrHeaderVal.Render(v)
+		lines[screenIdx] = lipgloss.NewStyle().Width(w).Render(
+			ansi.Truncate(line, w, ""),
+		)
+	}
+	return lines
 }
 
 // renderStatusBar builds a full-width status bar line where every character has

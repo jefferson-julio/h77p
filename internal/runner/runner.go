@@ -23,6 +23,13 @@ type Result struct {
 	JQOutput string // result of @jq filters applied to response body; empty if none/failed
 }
 
+// SeedEnv pre-populates vars with .env file contents and file-level @variable
+// declarations. Useful for showing the variable state before any request runs.
+func SeedEnv(file *httpfile.File, vars map[string]string) {
+	seedEnvVars(file, vars)
+	seedFileVars(file, vars)
+}
+
 // Run executes a single named request from file. If requestName is empty the
 // first request is used.
 func Run(file *httpfile.File, requestName string, vars map[string]string) (*Result, error) {

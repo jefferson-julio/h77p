@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/jefferson-julio/h77p/internal/runner"
 )
 
 type mode uint8
@@ -99,7 +100,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err != nil {
 			return m, nil
 		}
-		fv.env = copyEnv(m.env) // seed the file view with current session vars
+		// newFileView pre-seeds fv.env from .env + @var declarations.
+		// Merge session variables on top so set() results from prior requests
+		// override the seeded defaults.
+		for k, v := range m.env {
+			fv.env[k] = v
+		}
+		// Re-seed file vars so any updated @var declarations take effect.
+		runner.SeedEnv(fv.file, fv.env)
 		m.fileView = fv
 		m.mode = modeFileView
 		return m, tea.Batch(fv.watchCmd(), tea.ClearScreen)

@@ -58,12 +58,12 @@ var (
 
 	helpFileView = []helpSection{
 		{title: "Tabs", binds: [][2]string{
-			{"1 – 5", "jump to tab"},
-			{"tab", "cycle to next tab"},
+			{"1 – 5", "switch tab"},
+			{"tab", "toggle list / env focus"},
 		}},
 		{title: "Navigation", binds: [][2]string{
-			{"j / k", "move down / up"},
-			{"g / G", "first / last"},
+			{"j / k", "move / scroll (focused panel)"},
+			{"g / G", "first / last request"},
 			{"ctrl+d / u", "scroll preview"},
 			{"/", "search requests"},
 		}},
@@ -82,11 +82,11 @@ var (
 
 	helpPartsView = []helpSection{
 		{title: "Tabs", binds: [][2]string{
-			{"1 – 5", "jump to tab"},
-			{"tab", "cycle to next tab"},
+			{"1 – 5", "switch tab"},
+			{"tab", "toggle parts / env focus"},
 		}},
 		{title: "Navigation", binds: [][2]string{
-			{"j / k", "move between parts"},
+			{"j / k", "move / scroll (focused panel)"},
 			{"ctrl+d / u", "scroll preview"},
 		}},
 		{title: "Actions", binds: [][2]string{
