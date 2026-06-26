@@ -2,19 +2,25 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/jefferson-julio/h77p/internal/executor"
 	"github.com/jefferson-julio/h77p/internal/httpfile"
 	"github.com/jefferson-julio/h77p/internal/parser"
 	"github.com/jefferson-julio/h77p/internal/runner"
 	"github.com/jefferson-julio/h77p/internal/writer"
 )
+
+// fileChangedMsg is sent when the watched .http file is modified on disk.
+type fileChangedMsg struct{}
 
 // requestDoneMsg is sent by a background tea.Cmd when an HTTP request finishes.
 type requestDoneMsg struct {
@@ -41,6 +47,9 @@ type FileView struct {
 	statusMsg  string         // brief status shown in the bar after a run
 	lastResult *runner.Result // most recent completed result
 	showResult bool           // right panel shows result instead of request source
+
+	watchDone    chan struct{} // closed to stop the poll goroutine when leaving this view
+	watchModTime time.Time    // last known file mod time; poll compares against this
 }
 
 func newFileView(path string, w, h int) (FileView, error) {
@@ -51,13 +60,26 @@ func newFileView(path string, w, h int) (FileView, error) {
 	pw := max(rightWidth(w), 1)
 	ph := max(contentHeight(h), 1)
 	fv := FileView{
-		file:    file,
-		preview: viewport.New(pw, ph),
-		width:   w,
-		height:  h,
+		file:      file,
+		preview:   viewport.New(pw, ph),
+		width:     w,
+		height:    h,
+		watchDone: make(chan struct{}),
+	}
+	if info, err := os.Stat(path); err == nil {
+		fv.watchModTime = info.ModTime()
 	}
 	fv.filtered = fv.computeFiltered()
 	return fv.withSyncedPreview(), nil
+}
+
+// watchCmd returns the initial tea.Cmd that starts polling the file for changes.
+// Called once by the parent model when this view becomes active.
+func (fv FileView) watchCmd() tea.Cmd {
+	if fv.watchDone == nil || fv.file == nil {
+		return nil
+	}
+	return cmdPollFile(fv.file.Path, fv.watchModTime, fv.watchDone)
 }
 
 // computeFiltered rebuilds the filtered index list from the current search query.
@@ -126,6 +148,11 @@ func (fv FileView) update(msg tea.Msg) (FileView, tea.Cmd) {
 	// Handle background request results before the key check.
 	if done, ok := msg.(requestDoneMsg); ok {
 		return fv.handleRequestDone(done)
+	}
+
+	// Handle file-change notifications from the poll goroutine.
+	if _, ok := msg.(fileChangedMsg); ok {
+		return fv.handleFileChanged()
 	}
 
 	key, ok := msg.(tea.KeyMsg)
@@ -199,6 +226,10 @@ func (fv FileView) update(msg tea.Msg) (FileView, tea.Cmd) {
 		}
 
 	case "h", "esc":
+		if fv.watchDone != nil {
+			close(fv.watchDone)
+			fv.watchDone = nil
+		}
 		return fv, func() tea.Msg { return backMsg{} }
 
 	default:
@@ -312,15 +343,31 @@ func (fv FileView) buildLeftLines(w, h int) []string {
 		if dataIdx == fv.cursor {
 			prefix = "▸ "
 		}
-		label := truncate(fmt.Sprintf("%s%-7s %s", prefix, req.Method, req.URL), w)
 		if dataIdx == fv.cursor {
-			lines[screenIdx] = styleCursor.Width(w).Render(label)
-		} else {
-			s, ok := styleMethod[req.Method]
-			if !ok {
-				s = lipgloss.NewStyle()
+			// Cursor line: plain text with cursor background.
+			var plain string
+			if req.Name != "" {
+				plain = fmt.Sprintf("%s%-7s %s  %s", prefix, req.Method, req.Name, req.URL)
+			} else {
+				plain = fmt.Sprintf("%s%-7s %s", prefix, req.Method, req.URL)
 			}
-			lines[screenIdx] = s.Width(w).Render(label)
+			lines[screenIdx] = styleCursor.Width(w).Render(truncate(plain, w))
+		} else {
+			ms, ok := styleMethod[req.Method]
+			if !ok {
+				ms = lipgloss.NewStyle()
+			}
+			if req.Name != "" {
+				// Non-cursor: name in method color, URL dimmed.
+				main := ms.Render(fmt.Sprintf("%s%-7s %s", prefix, req.Method, req.Name))
+				tail := styleDim.Render("  " + req.URL)
+				lines[screenIdx] = lipgloss.NewStyle().Width(w).Render(
+					ansi.Truncate(main+tail, w, ""),
+				)
+			} else {
+				label := truncate(fmt.Sprintf("%s%-7s %s", prefix, req.Method, req.URL), w)
+				lines[screenIdx] = ms.Width(w).Render(label)
+			}
 		}
 	}
 	return lines
@@ -345,6 +392,70 @@ func (fv FileView) statusLine() string {
 		hint = tag + "  " + hint
 	}
 	return styleStatusBar.Width(fv.width).Render(hint)
+}
+
+// handleFileChanged reloads the parsed file and tries to keep the cursor on the
+// same request name. After updating state it re-arms the poll goroutine.
+func (fv FileView) handleFileChanged() (FileView, tea.Cmd) {
+	if fv.file == nil {
+		return fv, fv.watchCmd()
+	}
+
+	updated, err := parser.ParseFile(fv.file.Path)
+	if err == nil {
+		// Preserve cursor by request name across reloads.
+		var cursorName string
+		if len(fv.filtered) > 0 {
+			cursorName = fv.file.Requests[fv.filtered[fv.cursor]].Name
+		}
+
+		fv.file = updated
+		fv.filtered = fv.computeFiltered()
+
+		// Try to re-find the same request.
+		found := false
+		if cursorName != "" {
+			for i, idx := range fv.filtered {
+				if fv.file.Requests[idx].Name == cursorName {
+					fv.cursor = i
+					found = true
+					break
+				}
+			}
+		}
+		if !found && len(fv.filtered) > 0 && fv.cursor >= len(fv.filtered) {
+			fv.cursor = len(fv.filtered) - 1
+		}
+
+		fv = fv.withScrollAdjusted().withSyncedPreview()
+	}
+
+	// Update the stored mod time so the next poll doesn't fire immediately.
+	if info, err := os.Stat(fv.file.Path); err == nil {
+		fv.watchModTime = info.ModTime()
+	}
+
+	return fv, cmdPollFile(fv.file.Path, fv.watchModTime, fv.watchDone)
+}
+
+// cmdPollFile returns a tea.Cmd that blocks until the file at path is modified
+// (compared to modTime) or the done channel is closed.
+func cmdPollFile(path string, modTime time.Time, done <-chan struct{}) tea.Cmd {
+	return func() tea.Msg {
+		ticker := time.NewTicker(300 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return nil
+			case <-ticker.C:
+				info, err := os.Stat(path)
+				if err == nil && info.ModTime().After(modTime) {
+					return fileChangedMsg{}
+				}
+			}
+		}
+	}
 }
 
 // renderResult builds a coloured response preview for the viewport.

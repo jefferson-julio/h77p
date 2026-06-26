@@ -54,7 +54,12 @@ func NewAtFile(path string) (Model, error) {
 	return Model{mode: modeFileView, browser: b, fileView: fv}, nil
 }
 
-func (m Model) Init() tea.Cmd { return nil }
+func (m Model) Init() tea.Cmd {
+	if m.mode == modeFileView {
+		return m.fileView.watchCmd()
+	}
+	return nil
+}
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -83,7 +88,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.fileView = fv
 		m.mode = modeFileView
-		return m, nil
+		return m, fv.watchCmd()
 
 	case backMsg:
 		m.mode = modeBrowser

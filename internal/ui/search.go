@@ -54,13 +54,17 @@ func (s searchInput) handleKey(key tea.KeyMsg) searchInput {
 		s.query = string(append(r[:s.pos:s.pos], r[end:]...))
 
 	default:
-		// Only insert plain runes — skip alt-combos we don't handle.
-		if key.Type == tea.KeyRunes && !key.Alt {
-			newR := make([]rune, 0, len(r)+len(key.Runes))
+		// Insert plain runes; also handle space (tea.KeySpace, not tea.KeyRunes).
+		if !key.Alt && (key.Type == tea.KeyRunes || key.Type == tea.KeySpace) {
+			chars := key.Runes
+			if key.Type == tea.KeySpace {
+				chars = []rune{' '}
+			}
+			newR := make([]rune, 0, len(r)+len(chars))
 			newR = append(newR, r[:s.pos]...)
-			newR = append(newR, key.Runes...)
+			newR = append(newR, chars...)
 			newR = append(newR, r[s.pos:]...)
-			s.pos += len(key.Runes)
+			s.pos += len(chars)
 			s.query = string(newR)
 		}
 	}
