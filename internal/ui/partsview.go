@@ -48,12 +48,12 @@ type PartsView struct {
 	status     string
 	working    bool
 	lastResult *runner.Result
-	showResult bool
+	activeTab  int
 }
 
 func newPartsView(path string, file *httpfile.File, req httpfile.Request, w, h int) PartsView {
 	pw := max(rightWidth(w), 1)
-	ph := max(contentHeight(h), 1)
+	ph := max(contentHeight(h)-1, 1) // -1 for tab bar
 	pv := PartsView{
 		path:    path,
 		file:    file,
@@ -67,9 +67,14 @@ func newPartsView(path string, file *httpfile.File, req httpfile.Request, w, h i
 }
 
 func (pv PartsView) withSyncedPreview() PartsView {
-	if pv.showResult && pv.lastResult != nil {
-		pv.preview.SetContent(renderResult(pv.lastResult))
-	} else {
+	switch pv.activeTab {
+	case tabRun:
+		pv.preview.SetContent(renderHTTPResult(pv.lastResult))
+	case tabTests:
+		pv.preview.SetContent(renderTests(pv.lastResult))
+	case tabLogs:
+		pv.preview.SetContent(renderLogs(pv.lastResult))
+	default: // tabRequest
 		pv.preview.SetContent(pv.previewContent())
 	}
 	pv.preview.GotoTop()
@@ -79,7 +84,7 @@ func (pv PartsView) withSyncedPreview() PartsView {
 func (pv PartsView) resize(w, h int) PartsView {
 	pv.width, pv.height = w, h
 	pv.preview.Width = max(rightWidth(w), 1)
-	pv.preview.Height = max(contentHeight(h), 1)
+	pv.preview.Height = max(contentHeight(h)-1, 1) // -1 for tab bar
 	return pv
 }
 
@@ -99,16 +104,32 @@ func (pv PartsView) update(msg tea.Msg) (PartsView, tea.Cmd) {
 	}
 
 	switch key.String() {
+	case "1":
+		pv.activeTab = tabRequest
+		pv = pv.withSyncedPreview()
+	case "2":
+		pv.activeTab = tabRun
+		pv = pv.withSyncedPreview()
+	case "3":
+		pv.activeTab = tabTests
+		pv = pv.withSyncedPreview()
+	case "4":
+		pv.activeTab = tabLogs
+		pv = pv.withSyncedPreview()
+	case "tab":
+		pv.activeTab = (pv.activeTab + 1) % 4
+		pv = pv.withSyncedPreview()
+
 	case "j", "down":
 		if pv.cursor < 3 {
 			pv.cursor++
-			pv.showResult = false
+			pv.activeTab = tabRequest
 			pv = pv.withSyncedPreview()
 		}
 	case "k", "up":
 		if pv.cursor > 0 {
 			pv.cursor--
-			pv.showResult = false
+			pv.activeTab = tabRequest
 			pv = pv.withSyncedPreview()
 		}
 	case "e", "enter", "l":
@@ -194,7 +215,7 @@ func (pv PartsView) handleRequestDone(msg requestDoneMsg) (PartsView, tea.Cmd) {
 	}
 
 	pv.lastResult = msg.result
-	pv.showResult = true
+	pv.activeTab = tabRun
 
 	if msg.result != nil && msg.result.HTTP != nil {
 		h := msg.result.HTTP
@@ -295,7 +316,7 @@ func (pv PartsView) handleEditDone(msg partsEditDoneMsg) (PartsView, tea.Cmd) {
 		}
 	}
 	pv.status = "saved"
-	pv.showResult = false
+	pv.activeTab = tabRequest
 	pv = pv.withSyncedPreview()
 	return pv, nil
 }
@@ -363,6 +384,7 @@ func (pv PartsView) view() string {
 		return ""
 	}
 	lw := leftWidth(pv.width)
+	rw := rightWidth(pv.width)
 	ch := max(contentHeight(pv.height), 1)
 
 	title := pv.req.Name
@@ -372,7 +394,9 @@ func (pv PartsView) view() string {
 	header := styleHeader.Width(pv.width).Render(title)
 
 	left := pv.buildLeftLines(lw, ch)
-	right := strings.Split(pv.preview.View(), "\n")
+	tabBar := renderTabBar(pv.activeTab, rw)
+	vpLines := strings.Split(pv.preview.View(), "\n")
+	right := append([]string{tabBar}, vpLines...)
 	body := zipPanels(left, right, lw, ch)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, pv.statusLine())
@@ -431,7 +455,7 @@ func (pv PartsView) statusLine() string {
 	if pv.working {
 		return styleStatusBar.Width(pv.width).Render(pv.status)
 	}
-	hint := "e edit  r run  t test  x save example  j/k move  h/esc back  q quit"
+	hint := "1-4/tab switch tab  e edit  r run  t test  x save example  j/k move  h/esc back  q quit"
 	if pv.status != "" {
 		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("[" + pv.status + "]")
 		hint = tag + "  " + hint

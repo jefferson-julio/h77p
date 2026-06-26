@@ -7,6 +7,7 @@ import (
 	"github.com/dop251/goja"
 )
 
+
 type Engine struct{}
 
 func New() *Engine { return &Engine{} }
@@ -14,6 +15,12 @@ func New() *Engine { return &Engine{} }
 func (e *Engine) RunPreRequest(src string, ctx *PreContext) error {
 	vm := goja.New()
 	setPreContext(vm, ctx)
+	vm.Set("log", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			ctx.Logs = append(ctx.Logs, formatLogValue(vm, call.Arguments[0]))
+		}
+		return goja.Undefined()
+	})
 	if _, err := vm.RunString(src); err != nil {
 		return err
 	}
@@ -24,7 +31,7 @@ func (e *Engine) RunPreRequest(src string, ctx *PreContext) error {
 func (e *Engine) RunPostResponse(src string, ctx *PostContext) ([]*TestResult, error) {
 	vm := goja.New()
 	var results []*TestResult
-	registerStdlib(vm, &results, ctx.Env)
+	registerStdlib(vm, &results, ctx.Env, &ctx.Logs)
 	setPostContext(vm, ctx)
 	_, err := vm.RunString(src)
 	return results, err

@@ -2,7 +2,38 @@ package script
 
 import "github.com/dop251/goja"
 
-func registerStdlib(vm *goja.Runtime, results *[]*TestResult, env map[string]string) {
+// formatLogValue converts a goja value to a human-readable string.
+// Strings and primitives pass through directly. Objects and arrays are
+// serialized with JSON.stringify(v, null, 2) from within the JS runtime so
+// that non-serializable properties (functions, etc.) are silently dropped,
+// matching what a developer would expect from a browser console.
+func formatLogValue(vm *goja.Runtime, v goja.Value) string {
+	if goja.IsUndefined(v) || goja.IsNull(v) {
+		return v.String()
+	}
+	// Primitives: pass through without JSON wrapping.
+	if exported := v.Export(); exported != nil {
+		switch ev := exported.(type) {
+		case string:
+			return ev
+		case bool, int64, float64:
+			return v.String()
+		}
+	}
+	// Objects/arrays: use JS JSON.stringify so function-valued properties are
+	// skipped cleanly instead of causing a marshal error.
+	if jsonObj := vm.GlobalObject().Get("JSON"); jsonObj != nil {
+		if stringify, ok := goja.AssertFunction(jsonObj.ToObject(vm).Get("stringify")); ok {
+			if result, err := stringify(goja.Undefined(), v, goja.Null(), vm.ToValue(2)); err == nil &&
+				!goja.IsUndefined(result) && !goja.IsNull(result) {
+				return result.String()
+			}
+		}
+	}
+	return v.String()
+}
+
+func registerStdlib(vm *goja.Runtime, results *[]*TestResult, env map[string]string, logs *[]string) {
 	vm.Set("test", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 2 {
 			return goja.Undefined()
@@ -45,6 +76,15 @@ func registerStdlib(vm *goja.Runtime, results *[]*TestResult, env map[string]str
 			return goja.Undefined()
 		}
 		env[call.Arguments[0].String()] = call.Arguments[1].String()
+		return goja.Undefined()
+	})
+
+	vm.Set("log", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) == 0 {
+			*logs = append(*logs, "")
+			return goja.Undefined()
+		}
+		*logs = append(*logs, formatLogValue(vm, call.Arguments[0]))
 		return goja.Undefined()
 	})
 }

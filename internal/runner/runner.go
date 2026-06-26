@@ -17,6 +17,7 @@ type Result struct {
 	Tests   []*script.TestResult
 	Passed  bool
 	Err     error
+	Logs    []string
 }
 
 // Run executes a single named request from file. If requestName is empty the
@@ -75,6 +76,7 @@ func runOne(req *httpfile.Request, vars map[string]string) (*Result, error) {
 	req = &reqCopy
 
 	eng := script.New()
+	var logs []string
 
 	if req.PreScript != "" {
 		preCtx := &script.PreContext{
@@ -87,8 +89,9 @@ func runOne(req *httpfile.Request, vars map[string]string) (*Result, error) {
 			Env: vars,
 		}
 		if err := eng.RunPreRequest(req.PreScript, preCtx); err != nil {
-			return &Result{Request: req, Err: err}, nil
+			return &Result{Request: req, Err: err, Logs: preCtx.Logs}, nil
 		}
+		logs = append(logs, preCtx.Logs...)
 		req.Method = preCtx.Request.Method
 		req.URL = preCtx.Request.URL
 		req.Body = preCtx.Request.Body
@@ -97,7 +100,7 @@ func runOne(req *httpfile.Request, vars map[string]string) (*Result, error) {
 
 	httpResult, err := executor.Execute(req, vars)
 	if err != nil {
-		return &Result{Request: req, Err: err}, nil
+		return &Result{Request: req, Err: err, Logs: logs}, nil
 	}
 
 	result := &Result{
@@ -124,6 +127,7 @@ func runOne(req *httpfile.Request, vars map[string]string) (*Result, error) {
 			Env: vars,
 		}
 		tests, scriptErr := eng.RunPostResponse(req.PostScript, postCtx)
+		logs = append(logs, postCtx.Logs...)
 		result.Tests = tests
 		if scriptErr != nil {
 			result.Err = scriptErr
@@ -136,6 +140,7 @@ func runOne(req *httpfile.Request, vars map[string]string) (*Result, error) {
 		}
 	}
 
+	result.Logs = logs
 	return result, nil
 }
 

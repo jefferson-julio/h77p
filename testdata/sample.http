@@ -5,13 +5,15 @@ GET {{baseUrl}}/posts
 Accept: application/json
 
 @post-response {%
-  test("Status is 200", () => {
-    assert(response.status === 200, "expected 200");
-  });
+test("Status is 200", () => {
+  assert(response.status === 200, "expected 200");
+});
 
-  test("Returns an array", () => {
-    assert(Array.isArray(response.json()), "expected array");
-  });
+test("Returns an array", () => {
+  assert(Array.isArray(response.json()), "expected array");
+});
+
+log(response)
 %}
 
 @example {%
@@ -31,7 +33,7 @@ Content-Type: application/json; charset=utf-8
 ### Create Post
 
 @pre-request {%
-  request.headers["X-Request-Id"] = "h77p-" + Date.now();
+request.headers["X-Request-Id"] = "h77p-" + Date.now();
 %}
 
 @testId = 123
@@ -46,18 +48,21 @@ Content-Type: application/json
 }
 
 @post-response {%
-  test("Status is 201", () => {
-    assert(response.status === 201, "expected 201");
-  });
+test("Status is 201", () => {
+	assert(response.status === 201, "expected 201");
+});
 
-  set("createdId", String(response.json().id));
+set("createdId", String(response.json().id));
+
+log(response);
 %}
+
 ### Get Created Post
 GET {{baseUrl}}/posts/{{createdId}}
 Accept: application/json
 
 @post-response {%
-  test("Status is 200", () => {
-    assert(response.status === 200);
-  });
+test("Status is 200", () => {
+	assert(response.status === 200);
+});
 %}

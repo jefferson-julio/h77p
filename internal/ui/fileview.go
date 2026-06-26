@@ -20,6 +20,13 @@ import (
 	"github.com/jefferson-julio/h77p/internal/writer"
 )
 
+const (
+	tabRequest = iota
+	tabRun
+	tabTests
+	tabLogs
+)
+
 // fileChangedMsg is sent when the watched .http file is modified on disk.
 type fileChangedMsg struct{}
 
@@ -50,7 +57,7 @@ type FileView struct {
 	working    bool           // true while an HTTP request is in flight
 	statusMsg  string         // brief status shown in the bar after a run
 	lastResult *runner.Result // most recent completed result
-	showResult bool           // right panel shows result instead of request source
+	activeTab  int            // which right-panel tab is shown (tabRequest…tabLogs)
 
 	watchDone    chan struct{} // closed to stop the poll goroutine when leaving this view
 	watchModTime time.Time    // last known file mod time; poll compares against this
@@ -62,7 +69,7 @@ func newFileView(path string, w, h int) (FileView, error) {
 		return FileView{}, err
 	}
 	pw := max(rightWidth(w), 1)
-	ph := max(contentHeight(h), 1)
+	ph := max(contentHeight(h)-1, 1) // -1 for tab bar
 	fv := FileView{
 		file:      file,
 		preview:   viewport.New(pw, ph),
@@ -110,7 +117,7 @@ func (fv FileView) computeFiltered() []int {
 	return out
 }
 
-// withSyncedPreview updates the viewport content to match the current cursor.
+// withSyncedPreview updates the viewport content to match the current tab.
 func (fv FileView) withSyncedPreview() FileView {
 	if len(fv.filtered) == 0 {
 		msg := "(no requests)"
@@ -121,9 +128,14 @@ func (fv FileView) withSyncedPreview() FileView {
 		return fv
 	}
 	reqIdx := fv.filtered[fv.cursor]
-	if fv.showResult && fv.lastResult != nil {
-		fv.preview.SetContent(renderResult(fv.lastResult))
-	} else {
+	switch fv.activeTab {
+	case tabRun:
+		fv.preview.SetContent(renderHTTPResult(fv.lastResult))
+	case tabTests:
+		fv.preview.SetContent(renderTests(fv.lastResult))
+	case tabLogs:
+		fv.preview.SetContent(renderLogs(fv.lastResult))
+	default: // tabRequest
 		fv.preview.SetContent(renderRequest(fv.file.Requests[reqIdx]))
 	}
 	fv.preview.GotoTop()
@@ -133,7 +145,7 @@ func (fv FileView) withSyncedPreview() FileView {
 func (fv FileView) resize(w, h int) FileView {
 	fv.width, fv.height = w, h
 	fv.preview.Width = max(rightWidth(w), 1)
-	fv.preview.Height = max(contentHeight(h), 1)
+	fv.preview.Height = max(contentHeight(h)-1, 1) // -1 for tab bar
 	return fv
 }
 
@@ -192,26 +204,42 @@ func (fv FileView) update(msg tea.Msg) (FileView, tea.Cmd) {
 		fv.search.active = true
 		fv.search.pos = len([]rune(fv.search.query))
 
+	case "1":
+		fv.activeTab = tabRequest
+		fv = fv.withSyncedPreview()
+	case "2":
+		fv.activeTab = tabRun
+		fv = fv.withSyncedPreview()
+	case "3":
+		fv.activeTab = tabTests
+		fv = fv.withSyncedPreview()
+	case "4":
+		fv.activeTab = tabLogs
+		fv = fv.withSyncedPreview()
+	case "tab":
+		fv.activeTab = (fv.activeTab + 1) % 4
+		fv = fv.withSyncedPreview()
+
 	case "j", "down":
 		if fv.cursor < n-1 {
 			fv.cursor++
-			fv.showResult = false
+			fv.activeTab = tabRequest
 			fv = fv.withScrollAdjusted().withSyncedPreview()
 		}
 	case "k", "up":
 		if fv.cursor > 0 {
 			fv.cursor--
-			fv.showResult = false
+			fv.activeTab = tabRequest
 			fv = fv.withScrollAdjusted().withSyncedPreview()
 		}
 	case "g":
 		fv.cursor = 0
-		fv.showResult = false
+		fv.activeTab = tabRequest
 		fv = fv.withScrollAdjusted().withSyncedPreview()
 	case "G":
 		if n > 0 {
 			fv.cursor = n - 1
-			fv.showResult = false
+			fv.activeTab = tabRequest
 			fv = fv.withScrollAdjusted().withSyncedPreview()
 		}
 
@@ -358,7 +386,7 @@ func (fv FileView) handleRequestDone(msg requestDoneMsg) (FileView, tea.Cmd) {
 	}
 
 	fv.lastResult = msg.result
-	fv.showResult = true
+	fv.activeTab = tabRun
 
 	// Build status bar summary.
 	if msg.result != nil && msg.result.HTTP != nil {
@@ -403,6 +431,7 @@ func (fv FileView) view() string {
 		return ""
 	}
 	lw := leftWidth(fv.width)
+	rw := rightWidth(fv.width)
 	ch := max(contentHeight(fv.height), 1)
 
 	name := "(no file)"
@@ -412,11 +441,14 @@ func (fv FileView) view() string {
 	header := styleHeader.Width(fv.width).Render(name)
 
 	left := fv.buildLeftLines(lw, ch)
-	right := strings.Split(fv.preview.View(), "\n")
+	tabBar := renderTabBar(fv.activeTab, rw)
+	vpLines := strings.Split(fv.preview.View(), "\n")
+	right := append([]string{tabBar}, vpLines...)
 	body := zipPanels(left, right, lw, ch)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, fv.statusLine())
 }
+
 
 func (fv FileView) buildLeftLines(w, h int) []string {
 	lines := make([]string, h)
@@ -476,7 +508,7 @@ func (fv FileView) statusLine() string {
 		return styleStatusBar.Width(fv.width).Render(fv.statusMsg)
 	}
 
-	hint := "enter/l inspect  r run  t test  e edit file  E edit req  x save example  j/k move  g/G top/bot  ctrl+d/u scroll  / search  h/esc back  q quit"
+	hint := "1-4/tab switch tab  enter/l inspect  r run  t test  e edit file  E edit req  x save example  j/k move  g/G top/bot  ctrl+d/u scroll  / search  h/esc back  q quit"
 	if fv.statusMsg != "" {
 		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("[" + fv.statusMsg + "]")
 		hint = tag + "  " + hint
@@ -553,20 +585,17 @@ func cmdPollFile(path string, modTime time.Time, done <-chan struct{}) tea.Cmd {
 	}
 }
 
-// renderResult builds a coloured response preview for the viewport.
-func renderResult(result *runner.Result) string {
+// renderHTTPResult shows just the HTTP response (status, headers, body) without tests.
+func renderHTTPResult(result *runner.Result) string {
 	if result == nil {
-		return styleDim.Render("(no result)")
+		return styleDim.Render("(no run yet — press r to run)")
 	}
 	if result.Err != nil {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("error: " + result.Err.Error())
 	}
-
 	h := result.HTTP
 	var b strings.Builder
-
 	b.WriteString(colorStatusLine(h.Proto+" "+h.Status) + "\n")
-
 	keys := make([]string, 0, len(h.Headers))
 	for k := range h.Headers {
 		keys = append(keys, k)
@@ -575,24 +604,61 @@ func renderResult(result *runner.Result) string {
 	for _, k := range keys {
 		b.WriteString(colorHeader(k+": "+strings.Join(h.Headers[k], ", ")) + "\n")
 	}
-
 	if h.Body != "" {
 		b.WriteString("\n")
 		b.WriteString(highlightBodyFromHeaders(h.Body, h.Headers))
 		b.WriteString("\n")
 	}
+	return b.String()
+}
 
-	if len(result.Tests) > 0 {
-		b.WriteString("\n")
-		for _, t := range result.Tests {
-			if t.Passed {
-				b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("  PASS  "+t.Name) + "\n")
-			} else {
-				b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("  FAIL  "+t.Name+" — "+t.Error) + "\n")
+// renderTests shows only the test results from the last run.
+func renderTests(result *runner.Result) string {
+	if result == nil {
+		return styleDim.Render("(no run yet — press t to run)")
+	}
+	if result.Err != nil && len(result.Tests) == 0 {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("error: " + result.Err.Error())
+	}
+	if len(result.Tests) == 0 {
+		return styleDim.Render("(no tests in post-response script)")
+	}
+	var b strings.Builder
+	passed, failed := 0, 0
+	for _, t := range result.Tests {
+		if t.Passed {
+			passed++
+			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("  PASS  "+t.Name) + "\n")
+		} else {
+			failed++
+			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("  FAIL  "+t.Name) + "\n")
+			if t.Error != "" {
+				b.WriteString(styleDim.Render("        "+t.Error) + "\n")
 			}
 		}
 	}
+	b.WriteString("\n")
+	summary := fmt.Sprintf("%d passed", passed)
+	if failed > 0 {
+		summary += fmt.Sprintf(", %d failed", failed)
+	}
+	b.WriteString(styleDim.Render(summary) + "\n")
+	return b.String()
+}
 
+// renderLogs shows log() output from script execution.
+func renderLogs(result *runner.Result) string {
+	if result == nil {
+		return styleDim.Render("(no run yet)")
+	}
+	if len(result.Logs) == 0 {
+		return styleDim.Render("(no log() calls in scripts)")
+	}
+	var b strings.Builder
+	for i, l := range result.Logs {
+		b.WriteString(styleDim.Render(fmt.Sprintf("[%d]", i+1)) + "\n")
+		b.WriteString(l + "\n\n")
+	}
 	return b.String()
 }
 

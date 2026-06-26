@@ -44,6 +44,17 @@ var (
 	styleDivider = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240"))
 
+	styleTabActive = lipgloss.NewStyle().
+			Background(lipgloss.Color("238")).
+			Foreground(lipgloss.Color("212")).
+			Bold(true).
+			Padding(0, 1)
+
+	styleTabInactive = lipgloss.NewStyle().
+				Background(lipgloss.Color("235")).
+				Foreground(lipgloss.Color("244")).
+				Padding(0, 1)
+
 	styleMethod = map[string]lipgloss.Style{
 		"GET":    lipgloss.NewStyle().Foreground(lipgloss.Color("42")),
 		"POST":   lipgloss.NewStyle().Foreground(lipgloss.Color("214")),
@@ -63,6 +74,21 @@ func rightWidth(total int) int {
 
 func contentHeight(total int) int {
 	return total - headerHeight - statusHeight - panelPadding
+}
+
+// renderTabBar draws the four right-panel tabs and returns a line of width w.
+func renderTabBar(activeTab, w int) string {
+	labels := [4]string{"1 request", "2 run", "3 tests", "4 logs"}
+	var parts []string
+	for i, label := range labels {
+		if i == activeTab {
+			parts = append(parts, styleTabActive.Render(label))
+		} else {
+			parts = append(parts, styleTabInactive.Render(label))
+		}
+	}
+	bar := strings.Join(parts, styleDivider.Render("│"))
+	return lipgloss.NewStyle().Width(w).Background(lipgloss.Color("235")).Render(bar)
 }
 
 // truncate shortens s to maxWidth runes, appending "…" if cut.

@@ -94,7 +94,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, fv.watchCmd()
 
 	case openPartsMsg:
-		m.partsView = newPartsView(msg.path, msg.file, msg.req, m.width, m.height)
+		pv := newPartsView(msg.path, msg.file, msg.req, m.width, m.height)
+		// Carry run state from FileView so both views share the same context.
+		pv.lastResult = m.fileView.lastResult
+		pv.activeTab = m.fileView.activeTab
+		pv.status = m.fileView.statusMsg
+		pv = pv.withSyncedPreview()
+		m.partsView = pv
 		m.mode = modePartsView
 		return m, nil
 
@@ -102,6 +108,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.mode {
 		case modePartsView:
 			m.mode = modeFileView
+			// Carry run state back so FileView reflects any runs done in PartsView.
+			m.fileView.lastResult = m.partsView.lastResult
+			m.fileView.activeTab = m.partsView.activeTab
+			m.fileView.statusMsg = m.partsView.status
 			m.fileView.watchDone = make(chan struct{})
 			var cmd tea.Cmd
 			m.fileView, cmd = m.fileView.handleFileChanged()

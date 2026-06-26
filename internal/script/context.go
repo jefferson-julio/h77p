@@ -3,12 +3,14 @@ package script
 type PreContext struct {
 	Request *ScriptRequest
 	Env     map[string]string
+	Logs    []string
 }
 
 type PostContext struct {
 	Request  *ScriptRequest
 	Response *ScriptResponse
 	Env      map[string]string
+	Logs     []string
 }
 
 type ScriptRequest struct {
