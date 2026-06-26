@@ -62,6 +62,7 @@ const (
 	ctPlain ctKind = iota
 	ctJSON
 	ctXML
+	ctForm
 )
 
 type hlState struct {
@@ -104,6 +105,8 @@ func highlightHTTP(src string) string {
 				highlighted = colorJSON(body)
 			case ctXML:
 				highlighted = colorXML(body)
+			case ctForm:
+				highlighted = colorFormBody(body)
 			default:
 				highlighted = body
 			}
@@ -244,6 +247,33 @@ func colorLineNormal(raw, trimmed string) (string, hlState) {
 // Body highlighting
 // ---------------------------------------------------------------------------
 
+// colorFormBody highlights a multi-line x-www-form-urlencoded body where each
+// line is a "key=value" or "key=value&" pair.
+func colorFormBody(body string) string {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		amp := strings.HasSuffix(trimmed, "&")
+		kv := trimmed
+		if amp {
+			kv = kv[:len(kv)-1]
+		}
+		key, val, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		rendered := clrHeaderKey.Render(key) + clrHeaderSep.Render("=") + colorizeTokens(val, clrHeaderVal)
+		if amp {
+			rendered += clrDelim.Render("&")
+		}
+		lines[i] = rendered
+	}
+	return strings.Join(lines, "\n")
+}
+
 // highlightBodyFromHeaders highlights a full body string (potentially multi-line)
 // using the Content-Type header from the given map. Used by the live response panel.
 func highlightBodyFromHeaders(body string, headers map[string][]string) string {
@@ -259,6 +289,8 @@ func highlightBodyFromHeaders(body string, headers map[string][]string) string {
 				ctype = ctJSON
 			case strings.Contains(v, "xml"):
 				ctype = ctXML
+			case strings.Contains(v, "x-www-form-urlencoded"):
+				ctype = ctForm
 			}
 			break
 		}
@@ -266,18 +298,19 @@ func highlightBodyFromHeaders(body string, headers map[string][]string) string {
 	if ctype == ctPlain {
 		return body
 	}
-	// Highlight the whole body at once so the lexer has full context.
 	switch ctype {
 	case ctJSON:
 		return colorJSON(body)
 	case ctXML:
 		return colorXML(body)
+	case ctForm:
+		return colorFormBody(body)
 	}
 	return body
 }
 
 // parseContentType parses a "Name: Value" header line. Returns (kind, true) only
-// when the header name is Content-Type and the value contains "json" or "xml".
+// when the header name is Content-Type.
 func parseContentType(headerLine string) (ctKind, bool) {
 	name, value, ok := strings.Cut(strings.TrimSpace(headerLine), ":")
 	if !ok || !strings.EqualFold(strings.TrimSpace(name), "content-type") {
@@ -289,6 +322,8 @@ func parseContentType(headerLine string) (ctKind, bool) {
 		return ctJSON, true
 	case strings.Contains(v, "xml"):
 		return ctXML, true
+	case strings.Contains(v, "x-www-form-urlencoded"):
+		return ctForm, true
 	default:
 		return ctPlain, true
 	}

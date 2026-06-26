@@ -29,6 +29,12 @@ func Execute(req *httpfile.Request, vars map[string]string) (*Result, error) {
 	url := interpolate(req.URL, vars)
 	body := interpolate(req.Body, vars)
 
+	// x-www-form-urlencoded bodies are often written one param per line for
+	// readability; collapse newlines into a single query string before sending.
+	if isFormURLEncoded(req.Headers, vars) {
+		body = collapseFormBody(body)
+	}
+
 	var bodyReader io.Reader
 	if body != "" {
 		bodyReader = strings.NewReader(body)
@@ -71,6 +77,28 @@ func Execute(req *httpfile.Request, vars map[string]string) (*Result, error) {
 		Body:       string(respBody),
 		Duration:   duration,
 	}, nil
+}
+
+func isFormURLEncoded(headers []httpfile.Header, vars map[string]string) bool {
+	for _, h := range headers {
+		if strings.EqualFold(h.Name, "content-type") {
+			return strings.Contains(strings.ToLower(interpolate(h.Value, vars)), "x-www-form-urlencoded")
+		}
+	}
+	return false
+}
+
+// collapseFormBody joins lines of a multi-line URL-encoded body into a single
+// query string. Each line is trimmed; blank lines are skipped.
+func collapseFormBody(body string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			b.WriteString(line)
+		}
+	}
+	return b.String()
 }
 
 func interpolate(s string, vars map[string]string) string {
