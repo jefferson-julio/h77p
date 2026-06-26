@@ -1,0 +1,62 @@
+@baseUrl = https://jsonplaceholder.typicode.com
+
+### Get All Posts
+GET {{baseUrl}}/posts
+Accept: application/json
+
+@post-response {%
+  test("Status is 200", () => {
+    assert(response.status === 200, "expected 200");
+  });
+
+  test("Returns an array", () => {
+    assert(Array.isArray(response.json()), "expected array");
+  });
+%}
+
+@example {%
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+
+[
+  {
+    "userId": 1,
+    "id": 1,
+    "title": "sunt aut facere repellat provident",
+    "body": "quia et suscipit..."
+  }
+]
+%}
+
+### Create Post
+
+@pre-request {%
+  request.headers["X-Request-Id"] = "h77p-" + Date.now();
+%}
+
+POST {{baseUrl}}/posts
+Content-Type: application/json
+
+{
+  "title": "Hello from h77p",
+  "body": "Testing the post endpoint",
+  "userId": 1
+}
+
+@post-response {%
+  test("Status is 201", () => {
+    assert(response.status === 201, "expected 201");
+  });
+
+  set("createdId", String(response.json().id));
+%}
+
+### Get Created Post
+GET {{baseUrl}}/posts/{{createdId}}
+Accept: application/json
+
+@post-response {%
+  test("Status is 200", () => {
+    assert(response.status === 200);
+  });
+%}
