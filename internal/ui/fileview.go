@@ -483,7 +483,7 @@ func renderResult(result *runner.Result) string {
 
 	if h.Body != "" {
 		b.WriteString("\n")
-		b.WriteString(h.Body)
+		b.WriteString(highlightBodyFromHeaders(h.Body, h.Headers))
 		b.WriteString("\n")
 	}
 

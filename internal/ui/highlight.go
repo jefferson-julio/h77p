@@ -26,11 +26,13 @@ var (
 	clrStatus5xx = lipgloss.NewStyle().Foreground(lipgloss.Color("197"))
 )
 
-// JS highlighting via chroma — used for {%...%} script block content.
+// Chroma lexers/style/formatter shared across JS, JSON, and XML highlighting.
 var (
-	jsLexer = lexers.Get("javascript")
-	jsStyle = styles.Get("monokai")
-	jsFmtr  = formatters.Get("terminal256")
+	jsLexer   = lexers.Get("javascript")
+	jsonLexer = lexers.Get("json")
+	xmlLexer  = lexers.Get("xml")
+	jsStyle   = styles.Get("monokai")
+	jsFmtr    = formatters.Get("terminal256")
 )
 
 var knownMethods = map[string]bool{
@@ -38,87 +40,280 @@ var knownMethods = map[string]bool{
 	"DELETE": true, "HEAD": true, "OPTIONS": true, "TRACE": true, "CONNECT": true,
 }
 
-type hlState int
+// ---------------------------------------------------------------------------
+// State machine types
+// ---------------------------------------------------------------------------
+
+type hlMode int
 
 const (
-	hlNormal    hlState = iota
-	hlScript            // inside {%...%}
-	hlExStatus          // inside @example {%, expecting HTTP/x.x status line
-	hlExHeaders         // inside @example, reading response headers
-	hlExBody            // inside @example, reading response body
+	modeNormal     hlMode = iota
+	modeScript            // inside {%...%}
+	modeExStatus          // inside @example {%, expecting HTTP/x.x status line
+	modeExHeaders         // inside @example {%, reading response headers
+	modeExBody            // inside @example {%, reading response body
+	modeReqHeaders        // after METHOD URL line, reading request headers
+	modeReqBody           // reading request body
 )
+
+type ctKind int
+
+const (
+	ctPlain ctKind = iota
+	ctJSON
+	ctXML
+)
+
+type hlState struct {
+	mode  hlMode
+	ctype ctKind // content type detected from headers; carried into body mode
+}
+
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
 
 // highlightHTTP processes our extended .http format line by line and returns
 // an ANSI-coloured string suitable for display in a terminal viewport.
 func highlightHTTP(src string) string {
 	lines := strings.Split(src, "\n")
 	out := make([]string, len(lines))
-	state := hlNormal
+	var state hlState
 	for i, line := range lines {
 		out[i], state = colorLine(line, state)
 	}
 	return strings.Join(out, "\n")
 }
 
+// ---------------------------------------------------------------------------
+// Line colouriser
+// ---------------------------------------------------------------------------
+
 func colorLine(raw string, state hlState) (string, hlState) {
 	trimmed := strings.TrimSpace(raw)
 
-	switch state {
-	case hlScript:
+	switch state.mode {
+	case modeScript:
 		if trimmed == "%}" {
-			return clrDelim.Render(raw), hlNormal
+			return clrDelim.Render(raw), hlState{}
 		}
-		return colorJS(raw), hlScript
+		return colorJS(raw), state
 
-	case hlExStatus:
+	case modeExStatus:
 		if trimmed == "%}" {
-			return clrDelim.Render(raw), hlNormal
+			return clrDelim.Render(raw), hlState{}
 		}
 		if strings.HasPrefix(trimmed, "HTTP/") {
-			return colorStatusLine(raw), hlExHeaders
+			return colorStatusLine(raw), hlState{mode: modeExHeaders}
 		}
-		return raw, hlExStatus
+		return raw, state
 
-	case hlExHeaders:
+	case modeExHeaders:
+		if trimmed == "%}" {
+			return clrDelim.Render(raw), hlState{}
+		}
 		if trimmed == "" {
-			return raw, hlExBody
+			// Blank line: transition into body, carrying detected content type.
+			return raw, hlState{mode: modeExBody, ctype: state.ctype}
 		}
-		if trimmed == "%}" {
-			return clrDelim.Render(raw), hlNormal
+		next := state
+		if ct, ok := parseContentType(trimmed); ok {
+			next.ctype = ct
 		}
-		return colorHeader(raw), hlExHeaders
+		return colorHeader(raw), next
 
-	case hlExBody:
+	case modeExBody:
 		if trimmed == "%}" {
-			return clrDelim.Render(raw), hlNormal
+			return clrDelim.Render(raw), hlState{}
 		}
-		return raw, hlExBody
+		return colorBody(raw, state.ctype), state
+
+	case modeReqHeaders:
+		// Block tags and ### separators end request-header context.
+		if isBlockTag(trimmed) || strings.HasPrefix(trimmed, "###") {
+			return colorLineNormal(raw, trimmed)
+		}
+		if trimmed == "" {
+			// Blank separator: transition into request body.
+			return raw, hlState{mode: modeReqBody, ctype: state.ctype}
+		}
+		next := state
+		if ct, ok := parseContentType(trimmed); ok {
+			next.ctype = ct
+		}
+		return colorHeader(raw), next
+
+	case modeReqBody:
+		// Block tags and ### separators end request-body context.
+		if isBlockTag(trimmed) || strings.HasPrefix(trimmed, "###") {
+			return colorLineNormal(raw, trimmed)
+		}
+		return colorBody(raw, state.ctype), state
 	}
 
-	// hlNormal
+	// modeNormal
+	return colorLineNormal(raw, trimmed)
+}
+
+// colorLineNormal handles lines in the top-level (non-body, non-script) context.
+// It is also called when modeReqHeaders/modeReqBody see a block tag or ### line
+// and need to re-enter normal-mode processing.
+func colorLineNormal(raw, trimmed string) (string, hlState) {
 	switch {
 	case strings.HasPrefix(trimmed, "###"):
-		return clrSection.Render(raw), hlNormal
+		return clrSection.Render(raw), hlState{}
 
 	case trimmed == "@pre-request {%" || trimmed == "@post-response {%":
 		kw := strings.TrimSpace(strings.TrimSuffix(trimmed, "{%"))
-		return clrKeyword.Render(kw) + " " + clrDelim.Render("{%"), hlScript
+		return clrKeyword.Render(kw) + " " + clrDelim.Render("{%"), hlState{mode: modeScript}
 
 	case trimmed == "@example {%":
-		return clrKeyword.Render("@example") + " " + clrDelim.Render("{%"), hlExStatus
+		return clrKeyword.Render("@example") + " " + clrDelim.Render("{%"), hlState{mode: modeExStatus}
 
 	case trimmed == "%}":
-		return clrDelim.Render(raw), hlNormal
+		return clrDelim.Render(raw), hlState{}
 
 	case isMethodLine(trimmed):
-		return colorMethodLine(raw), hlNormal
+		// After the method line we expect request headers next.
+		return colorMethodLine(raw), hlState{mode: modeReqHeaders}
 
 	case isHeaderLine(trimmed):
-		return colorHeader(raw), hlNormal
+		return colorHeader(raw), hlState{}
 	}
 
-	return raw, hlNormal
+	return raw, hlState{}
 }
+
+// ---------------------------------------------------------------------------
+// Body highlighting
+// ---------------------------------------------------------------------------
+
+// colorBody applies JSON/XML syntax highlighting to a body line based on the
+// content type detected from the preceding headers. Plain text is returned as-is.
+func colorBody(raw string, ctype ctKind) string {
+	if strings.TrimSpace(raw) == "" {
+		return raw
+	}
+	switch ctype {
+	case ctJSON:
+		return colorJSON(raw)
+	case ctXML:
+		return colorXML(raw)
+	default:
+		return raw
+	}
+}
+
+// highlightBodyFromHeaders highlights a full body string (potentially multi-line)
+// using the Content-Type header from the given map. Used by the live response panel.
+func highlightBodyFromHeaders(body string, headers map[string][]string) string {
+	if body == "" {
+		return body
+	}
+	ctype := ctPlain
+	for k, vs := range headers {
+		if strings.EqualFold(k, "content-type") && len(vs) > 0 {
+			v := strings.ToLower(vs[0])
+			switch {
+			case strings.Contains(v, "json"):
+				ctype = ctJSON
+			case strings.Contains(v, "xml"):
+				ctype = ctXML
+			}
+			break
+		}
+	}
+	if ctype == ctPlain {
+		return body
+	}
+	// Highlight the whole body at once so the lexer has full context.
+	switch ctype {
+	case ctJSON:
+		return colorJSON(body)
+	case ctXML:
+		return colorXML(body)
+	}
+	return body
+}
+
+// parseContentType parses a "Name: Value" header line. Returns (kind, true) only
+// when the header name is Content-Type and the value contains "json" or "xml".
+func parseContentType(headerLine string) (ctKind, bool) {
+	name, value, ok := strings.Cut(strings.TrimSpace(headerLine), ":")
+	if !ok || !strings.EqualFold(strings.TrimSpace(name), "content-type") {
+		return ctPlain, false
+	}
+	v := strings.ToLower(value)
+	switch {
+	case strings.Contains(v, "json"):
+		return ctJSON, true
+	case strings.Contains(v, "xml"):
+		return ctXML, true
+	default:
+		return ctPlain, true
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Chroma helpers
+// ---------------------------------------------------------------------------
+
+func colorJSON(raw string) string {
+	if jsonLexer == nil || jsFmtr == nil || jsStyle == nil {
+		return raw
+	}
+	iter, err := jsonLexer.Tokenise(nil, raw)
+	if err != nil {
+		return raw
+	}
+	var buf bytes.Buffer
+	if err := jsFmtr.Format(&buf, jsStyle, iter); err != nil {
+		return raw
+	}
+	return strings.TrimRight(buf.String(), "\n")
+}
+
+func colorXML(raw string) string {
+	if xmlLexer == nil || jsFmtr == nil || jsStyle == nil {
+		return raw
+	}
+	iter, err := xmlLexer.Tokenise(nil, raw)
+	if err != nil {
+		return raw
+	}
+	var buf bytes.Buffer
+	if err := jsFmtr.Format(&buf, jsStyle, iter); err != nil {
+		return raw
+	}
+	return strings.TrimRight(buf.String(), "\n")
+}
+
+// isBlockTag returns true for the block-opening tags that can appear within a
+// request definition (@pre-request, @post-response, @example).
+func isBlockTag(line string) bool {
+	return line == "@pre-request {%" ||
+		line == "@post-response {%" ||
+		line == "@example {%"
+}
+
+func colorJS(raw string) string {
+	if jsLexer == nil || jsFmtr == nil || jsStyle == nil {
+		return styleDim.Render(raw)
+	}
+	iter, err := jsLexer.Tokenise(nil, raw)
+	if err != nil {
+		return styleDim.Render(raw)
+	}
+	var buf bytes.Buffer
+	if err := jsFmtr.Format(&buf, jsStyle, iter); err != nil {
+		return styleDim.Render(raw)
+	}
+	return strings.TrimRight(buf.String(), "\n")
+}
+
+// ---------------------------------------------------------------------------
+// Line-level helpers (unchanged)
+// ---------------------------------------------------------------------------
 
 func isMethodLine(line string) bool {
 	m, _, ok := strings.Cut(line, " ")
@@ -201,21 +396,3 @@ func colorizeTokens(s string, base lipgloss.Style) string {
 	}
 	return b.String()
 }
-
-// colorJS runs a single line through chroma's JavaScript lexer.
-// Falls back to a dim style if the lexer is unavailable.
-func colorJS(raw string) string {
-	if jsLexer == nil || jsFmtr == nil || jsStyle == nil {
-		return styleDim.Render(raw)
-	}
-	iter, err := jsLexer.Tokenise(nil, raw)
-	if err != nil {
-		return styleDim.Render(raw)
-	}
-	var buf bytes.Buffer
-	if err := jsFmtr.Format(&buf, jsStyle, iter); err != nil {
-		return styleDim.Render(raw)
-	}
-	return strings.TrimRight(buf.String(), "\n")
-}
-
