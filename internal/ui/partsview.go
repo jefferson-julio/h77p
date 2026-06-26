@@ -50,6 +50,7 @@ type PartsView struct {
 	working    bool
 	lastResult *runner.Result
 	activeTab  int
+	helpOpen   bool
 
 	watchDone    chan struct{}
 	watchModTime time.Time
@@ -148,7 +149,15 @@ func (pv PartsView) update(msg tea.Msg) (PartsView, tea.Cmd) {
 		return pv, cmd
 	}
 
+	if pv.helpOpen {
+		pv.helpOpen = false
+		return pv, nil
+	}
+
 	switch key.String() {
+	case "?":
+		pv.helpOpen = true
+
 	case "1":
 		pv.activeTab = tabRequest
 		pv = pv.withSyncedPreview()
@@ -441,6 +450,9 @@ func (pv PartsView) view() string {
 	if pv.width == 0 {
 		return ""
 	}
+	if pv.helpOpen {
+		return renderHelpOverlay(pv.width, pv.height, helpPartsView)
+	}
 	lw := leftWidth(pv.width)
 	rw := rightWidth(pv.width)
 	ch := max(contentHeight(pv.height), 1)
@@ -513,7 +525,7 @@ func (pv PartsView) statusLine() string {
 	if pv.working {
 		return styleStatusBar.Width(pv.width).Render(pv.status)
 	}
-	hint := "1-5/tab switch tab  e edit  r run  t test  o open body  x save example  j/k move  h/esc back  q quit"
+	hint := "e edit  r run  o open body  j/k parts  ? help"
 	if pv.status != "" {
 		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("[" + pv.status + "]")
 		hint = tag + "  " + hint

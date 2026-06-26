@@ -88,6 +88,7 @@ type FileView struct {
 	statusMsg  string         // brief status shown in the bar after a run
 	lastResult *runner.Result // most recent completed result
 	activeTab  int            // which right-panel tab is shown (tabRequest…tabLogs)
+	helpOpen   bool
 
 	watchDone    chan struct{} // closed to stop the poll goroutine when leaving this view
 	watchModTime time.Time     // last known file mod time; poll compares against this
@@ -224,6 +225,11 @@ func (fv FileView) update(msg tea.Msg) (FileView, tea.Cmd) {
 		return fv, cmd
 	}
 
+	if fv.helpOpen {
+		fv.helpOpen = false
+		return fv, nil
+	}
+
 	// While searching, route all keystrokes through the search input.
 	if fv.search.active {
 		oldQuery := fv.search.query
@@ -240,6 +246,9 @@ func (fv FileView) update(msg tea.Msg) (FileView, tea.Cmd) {
 	n := len(fv.filtered)
 
 	switch key.String() {
+	case "?":
+		fv.helpOpen = true
+
 	case "/":
 		fv.search.active = true
 		fv.search.pos = len([]rune(fv.search.query))
@@ -483,6 +492,9 @@ func (fv FileView) view() string {
 	if fv.width == 0 {
 		return ""
 	}
+	if fv.helpOpen {
+		return renderHelpOverlay(fv.width, fv.height, helpFileView)
+	}
 	lw := leftWidth(fv.width)
 	rw := rightWidth(fv.width)
 	ch := max(contentHeight(fv.height), 1)
@@ -560,7 +572,7 @@ func (fv FileView) statusLine() string {
 		return styleStatusBar.Width(fv.width).Render(fv.statusMsg)
 	}
 
-	hint := "1-5/tab switch tab  enter/l inspect  r run  t test  o open body  e edit file  E edit req  x save example  j/k move  g/G top/bot  ctrl+d/u scroll  / search  h/esc back  q quit"
+	hint := "r run  e edit  enter inspect  / search  ? help"
 	if fv.statusMsg != "" {
 		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("[" + fv.statusMsg + "]")
 		hint = tag + "  " + hint

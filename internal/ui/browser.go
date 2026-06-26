@@ -30,6 +30,8 @@ type Browser struct {
 
 	search   searchInput
 	filtered []int // indices into entries that pass the current filter
+
+	helpOpen bool
 }
 
 func newBrowser(cwd string) (Browser, error) {
@@ -154,6 +156,11 @@ func (b Browser) update(msg tea.Msg) (Browser, tea.Cmd) {
 		return b, nil
 	}
 
+	if b.helpOpen {
+		b.helpOpen = false
+		return b, nil
+	}
+
 	// While searching, route all keystrokes through the search input.
 	if b.search.active {
 		oldQuery := b.search.query
@@ -169,6 +176,9 @@ func (b Browser) update(msg tea.Msg) (Browser, tea.Cmd) {
 
 	n := len(b.filtered)
 	switch key.String() {
+	case "?":
+		b.helpOpen = true
+
 	case "/":
 		b.search.active = true
 		// Position cursor at end of any existing query so the user can refine
@@ -234,6 +244,9 @@ func (b Browser) update(msg tea.Msg) (Browser, tea.Cmd) {
 func (b Browser) view() string {
 	if b.width == 0 {
 		return ""
+	}
+	if b.helpOpen {
+		return renderHelpOverlay(b.width, b.height, helpBrowser)
 	}
 	lw := leftWidth(b.width)
 	rw := rightWidth(b.width)
@@ -303,7 +316,7 @@ func (b Browser) statusLine() string {
 	if b.search.active {
 		return styleStatusBar.Width(b.width).Render(b.search.renderPrompt())
 	}
-	hint := "j/k move  l/enter open  h/- up  g/G top/bot  / search  q quit"
+	hint := "j/k move  enter open  h/- up  / search  ? help"
 	if b.search.query != "" {
 		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).
 			Render(fmt.Sprintf("[/%s]", b.search.query))
