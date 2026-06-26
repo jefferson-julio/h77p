@@ -10,59 +10,73 @@ const (
 	leftPanelRatio = 3 // left panel takes 1/leftPanelRatio of total width
 	headerHeight   = 1
 	statusHeight   = 1
-	panelPadding   = 0 // no borders on panels
+	panelPadding   = 0
 )
 
 var (
+	styleSelected  lipgloss.Style
+	styleCursor    lipgloss.Style
+	styleDim       lipgloss.Style
+	styleDir       lipgloss.Style
+	styleHeader    lipgloss.Style
+	styleStatusBar lipgloss.Style
+	styleDivider   lipgloss.Style
+	styleTabActive lipgloss.Style
+	styleTabInactive lipgloss.Style
+	styleMethod    map[string]lipgloss.Style
+)
+
+func initStyles() {
+	t := activeTheme
 	styleSelected = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("212")).
-			Bold(true)
+		Foreground(t.Accent).
+		Bold(true)
 
 	styleCursor = lipgloss.NewStyle().
-			Background(lipgloss.Color("236")).
-			Foreground(lipgloss.Color("212")).
-			Bold(true)
+		Background(t.BgSubtle).
+		Foreground(t.Accent).
+		Bold(true)
 
 	styleDim = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244"))
+		Foreground(t.FgDim)
 
 	styleDir = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("75")).
-			Bold(true)
+		Foreground(t.Dir).
+		Bold(true)
 
 	styleHeader = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("250")).
-			Background(lipgloss.Color("238")).
-			Padding(0, 1)
+		Bold(true).
+		Foreground(t.FgBase).
+		Background(t.BgPanel).
+		Padding(0, 1)
 
 	styleStatusBar = lipgloss.NewStyle().
-			Background(lipgloss.Color("236")).
-			Foreground(lipgloss.Color("244")).
-			Padding(0, 1)
+		Background(t.BgSubtle).
+		Foreground(t.FgDim).
+		Padding(0, 1)
 
 	styleDivider = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
+		Foreground(t.FgFaint)
 
 	styleTabActive = lipgloss.NewStyle().
-			Background(lipgloss.Color("238")).
-			Foreground(lipgloss.Color("212")).
-			Bold(true).
-			Padding(0, 1)
+		Background(t.BgPanel).
+		Foreground(t.Accent).
+		Bold(true).
+		Padding(0, 1)
 
 	styleTabInactive = lipgloss.NewStyle().
-				Background(lipgloss.Color("235")).
-				Foreground(lipgloss.Color("244")).
-				Padding(0, 1)
+		Background(t.BgDimmer).
+		Foreground(t.FgDim).
+		Padding(0, 1)
 
 	styleMethod = map[string]lipgloss.Style{
-		"GET":    lipgloss.NewStyle().Foreground(lipgloss.Color("42")),
-		"POST":   lipgloss.NewStyle().Foreground(lipgloss.Color("214")),
-		"PUT":    lipgloss.NewStyle().Foreground(lipgloss.Color("33")),
-		"PATCH":  lipgloss.NewStyle().Foreground(lipgloss.Color("99")),
-		"DELETE": lipgloss.NewStyle().Foreground(lipgloss.Color("196")),
+		"GET":    lipgloss.NewStyle().Foreground(t.MethodGET),
+		"POST":   lipgloss.NewStyle().Foreground(t.MethodPOST),
+		"PUT":    lipgloss.NewStyle().Foreground(t.MethodPUT),
+		"PATCH":  lipgloss.NewStyle().Foreground(t.MethodPATCH),
+		"DELETE": lipgloss.NewStyle().Foreground(t.MethodDELETE),
 	}
-)
+}
 
 func leftWidth(total int) int {
 	return total / leftPanelRatio
@@ -76,7 +90,7 @@ func contentHeight(total int) int {
 	return total - headerHeight - statusHeight - panelPadding
 }
 
-// renderTabBar draws the four right-panel tabs and returns a line of width w.
+// renderTabBar draws the five right-panel tabs and returns a line of width w.
 func renderTabBar(activeTab, w int) string {
 	labels := []string{"1 request", "2 run", "3 tests", "4 logs", "5 example"}
 	var parts []string
@@ -88,7 +102,7 @@ func renderTabBar(activeTab, w int) string {
 		}
 	}
 	bar := strings.Join(parts, styleDivider.Render("│"))
-	return lipgloss.NewStyle().Width(w).Background(lipgloss.Color("235")).Render(bar)
+	return lipgloss.NewStyle().Width(w).Background(activeTheme.BgDimmer).Render(bar)
 }
 
 // truncate shortens s to maxWidth runes, appending "…" if cut.
@@ -103,8 +117,7 @@ func truncate(s string, maxWidth int) string {
 	return string(runes[:maxWidth-1]) + "…"
 }
 
-// zipPanels stitches left and right line slices side-by-side with a divider
-// column. Both slices should already be padded/truncated to their panel widths.
+// zipPanels stitches left and right line slices side-by-side with a divider.
 func zipPanels(left, right []string, lw, h int) string {
 	div := styleDivider.Render("│")
 	rows := make([]string, h)

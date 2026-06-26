@@ -7,6 +7,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var themeName string
+
 var rootCmd = &cobra.Command{
 	Use:   "h77p [file.http]",
 	Short: "A terminal HTTP client driven by .http files",
@@ -14,6 +16,9 @@ var rootCmd = &cobra.Command{
 	// Running h77p with no args launches the TUI browser at the current directory.
 	// Running h77p <file.http> opens that file directly in the TUI file view.
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if t, ok := ui.ThemeByName(themeName); ok {
+			ui.InitTheme(t)
+		}
 		if len(args) == 1 {
 			return ui.StartAtFile(args[0])
 		}
@@ -30,6 +35,7 @@ func Execute() error {
 }
 
 func init() {
+	rootCmd.PersistentFlags().StringVar(&themeName, "theme", "catppuccin", "colour theme: monokai, nord, catppuccin")
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(testCmd)
 	rootCmd.AddCommand(uiCmd)

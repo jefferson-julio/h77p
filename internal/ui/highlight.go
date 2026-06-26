@@ -10,30 +10,53 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Token colors for the .http file format.
+// Token colours for the .http file format. Populated by initHighlightStyles().
 var (
-	clrSection   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
-	clrKeyword   = lipgloss.NewStyle().Foreground(lipgloss.Color("141"))
-	clrDelim     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	clrHeaderKey = lipgloss.NewStyle().Foreground(lipgloss.Color("81"))
-	clrHeaderSep = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	clrHeaderVal = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	clrURL       = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	clrVar       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
-	clrStatus2xx = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	clrStatus3xx = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	clrStatus4xx = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	clrStatus5xx = lipgloss.NewStyle().Foreground(lipgloss.Color("197"))
+	clrSection   lipgloss.Style
+	clrKeyword   lipgloss.Style
+	clrDelim     lipgloss.Style
+	clrHeaderKey lipgloss.Style
+	clrHeaderSep lipgloss.Style
+	clrHeaderVal lipgloss.Style
+	clrURL       lipgloss.Style
+	clrVar       lipgloss.Style
+	clrStatus2xx lipgloss.Style
+	clrStatus3xx lipgloss.Style
+	clrStatus4xx lipgloss.Style
+	clrStatus5xx lipgloss.Style
 )
 
 // Chroma lexers/style/formatter shared across JS, JSON, and XML highlighting.
+// jsStyle is set by initHighlightStyles() from the active theme.
 var (
 	jsLexer   = lexers.Get("javascript")
 	jsonLexer = lexers.Get("json")
 	xmlLexer  = lexers.Get("xml")
-	jsStyle   = styles.Get("monokai")
+	jsStyle   = styles.Get("monokai") // overridden by initHighlightStyles
 	jsFmtr    = formatters.Get("terminal256")
 )
+
+func initHighlightStyles() {
+	t := activeTheme
+	clrSection   = lipgloss.NewStyle().Bold(true).Foreground(t.SynSection)
+	clrKeyword   = lipgloss.NewStyle().Foreground(t.SynKeyword)
+	clrDelim     = lipgloss.NewStyle().Foreground(t.FgFaint)
+	clrHeaderKey = lipgloss.NewStyle().Foreground(t.SynHeaderKey)
+	clrHeaderSep = lipgloss.NewStyle().Foreground(t.FgFaint)
+	clrHeaderVal = lipgloss.NewStyle().Foreground(t.SynHeaderVal)
+	clrURL       = lipgloss.NewStyle().Foreground(t.SynHeaderVal)
+	clrVar       = lipgloss.NewStyle().Bold(true).Foreground(t.SynVar)
+	clrStatus2xx = lipgloss.NewStyle().Foreground(t.Status2xx)
+	clrStatus3xx = lipgloss.NewStyle().Foreground(t.Status3xx)
+	clrStatus4xx = lipgloss.NewStyle().Foreground(t.Status4xx)
+	clrStatus5xx = lipgloss.NewStyle().Foreground(t.Status5xx)
+
+	if s := styles.Get(t.ChromaStyle); s != nil {
+		jsStyle = s
+	} else {
+		jsStyle = styles.Get("monokai")
+	}
+}
 
 var knownMethods = map[string]bool{
 	"GET": true, "POST": true, "PUT": true, "PATCH": true,

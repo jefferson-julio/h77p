@@ -12,26 +12,35 @@ type helpSection struct {
 }
 
 var (
+	styleHelpBox     lipgloss.Style
+	styleHelpHeading lipgloss.Style
+	styleHelpSection lipgloss.Style
+	styleHelpKey     lipgloss.Style
+	styleHelpDesc    lipgloss.Style
+)
+
+func initHelpStyles() {
+	t := activeTheme
 	styleHelpBox = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("212")).
-			Padding(1, 3)
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(t.Accent).
+		Padding(1, 3)
 
 	styleHelpHeading = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("212")).
-				Bold(true)
+		Foreground(t.Accent).
+		Bold(true)
 
 	styleHelpSection = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("244")).
-				Bold(true)
+		Foreground(t.FgDim).
+		Bold(true)
 
 	styleHelpKey = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("220")).
-			Width(16)
+		Foreground(t.SynSection).
+		Width(16)
 
 	styleHelpDesc = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252"))
-)
+		Foreground(t.FgBase)
+}
 
 var (
 	helpBrowser = []helpSection{
@@ -106,5 +115,5 @@ func renderHelpOverlay(w, h int, sections []helpSection) string {
 
 	box := styleHelpBox.Render(strings.TrimRight(b.String(), "\n"))
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("235")))
+		lipgloss.WithWhitespaceBackground(activeTheme.BgDimmer))
 }
