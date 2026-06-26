@@ -73,15 +73,74 @@ type hlState struct {
 // Entry point
 // ---------------------------------------------------------------------------
 
-// highlightHTTP processes our extended .http format line by line and returns
-// an ANSI-coloured string suitable for display in a terminal viewport.
+// highlightHTTP processes our extended .http format and returns an ANSI-coloured
+// string suitable for display in a terminal viewport.
+//
+// Body regions (modeExBody / modeReqBody) are buffered and passed to the chroma
+// lexer as a single string so the lexer has full structural context. Per-line
+// tokenisation produces wrong bracket/punctuation colours for JSON/XML.
 func highlightHTTP(src string) string {
 	lines := strings.Split(src, "\n")
-	out := make([]string, len(lines))
-	var state hlState
-	for i, line := range lines {
-		out[i], state = colorLine(line, state)
+	out := make([]string, 0, len(lines))
+	var st hlState
+	var bodyBuf []string
+
+	flushBody := func() {
+		if len(bodyBuf) == 0 {
+			return
+		}
+		// Preserve trailing blank lines: the chroma formatter strips trailing
+		// newlines, so we detach them and re-append after highlighting.
+		end := len(bodyBuf)
+		for end > 0 && strings.TrimSpace(bodyBuf[end-1]) == "" {
+			end--
+		}
+		trailing := bodyBuf[end:]
+		if end > 0 {
+			body := strings.Join(bodyBuf[:end], "\n")
+			var highlighted string
+			switch st.ctype {
+			case ctJSON:
+				highlighted = colorJSON(body)
+			case ctXML:
+				highlighted = colorXML(body)
+			default:
+				highlighted = body
+			}
+			out = append(out, strings.Split(highlighted, "\n")...)
+		}
+		out = append(out, trailing...)
+		bodyBuf = bodyBuf[:0]
 	}
+
+	for _, raw := range lines {
+		trimmed := strings.TrimSpace(raw)
+		switch st.mode {
+		case modeExBody:
+			if trimmed == "%}" {
+				flushBody()
+				out = append(out, clrDelim.Render(raw))
+				st = hlState{}
+			} else {
+				bodyBuf = append(bodyBuf, raw)
+			}
+		case modeReqBody:
+			if isBlockTag(trimmed) || strings.HasPrefix(trimmed, "###") {
+				flushBody()
+				colored, next := colorLineNormal(raw, trimmed)
+				out = append(out, colored)
+				st = next
+			} else {
+				bodyBuf = append(bodyBuf, raw)
+			}
+		default:
+			colored, next := colorLine(raw, st)
+			out = append(out, colored)
+			st = next
+		}
+	}
+	flushBody() // request body ending at EOF
+
 	return strings.Join(out, "\n")
 }
 
@@ -122,12 +181,6 @@ func colorLine(raw string, state hlState) (string, hlState) {
 		}
 		return colorHeader(raw), next
 
-	case modeExBody:
-		if trimmed == "%}" {
-			return clrDelim.Render(raw), hlState{}
-		}
-		return colorBody(raw, state.ctype), state
-
 	case modeReqHeaders:
 		// Block tags and ### separators end request-header context.
 		if isBlockTag(trimmed) || strings.HasPrefix(trimmed, "###") {
@@ -143,12 +196,6 @@ func colorLine(raw string, state hlState) (string, hlState) {
 		}
 		return colorHeader(raw), next
 
-	case modeReqBody:
-		// Block tags and ### separators end request-body context.
-		if isBlockTag(trimmed) || strings.HasPrefix(trimmed, "###") {
-			return colorLineNormal(raw, trimmed)
-		}
-		return colorBody(raw, state.ctype), state
 	}
 
 	// modeNormal
@@ -187,22 +234,6 @@ func colorLineNormal(raw, trimmed string) (string, hlState) {
 // ---------------------------------------------------------------------------
 // Body highlighting
 // ---------------------------------------------------------------------------
-
-// colorBody applies JSON/XML syntax highlighting to a body line based on the
-// content type detected from the preceding headers. Plain text is returned as-is.
-func colorBody(raw string, ctype ctKind) string {
-	if strings.TrimSpace(raw) == "" {
-		return raw
-	}
-	switch ctype {
-	case ctJSON:
-		return colorJSON(raw)
-	case ctXML:
-		return colorXML(raw)
-	default:
-		return raw
-	}
-}
 
 // highlightBodyFromHeaders highlights a full body string (potentially multi-line)
 // using the Content-Type header from the given map. Used by the live response panel.

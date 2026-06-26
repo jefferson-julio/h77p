@@ -11,6 +11,7 @@ type mode uint8
 const (
 	modeBrowser mode = iota
 	modeFileView
+	modePartsView
 )
 
 // openFileMsg is sent by Browser when the user selects a .http file.
@@ -22,11 +23,12 @@ type backMsg struct{}
 // Model is the root Bubble Tea model. It owns the current mode and delegates
 // all input and rendering to the active sub-model.
 type Model struct {
-	mode     mode
-	browser  Browser
-	fileView FileView
-	width    int
-	height   int
+	mode      mode
+	browser   Browser
+	fileView  FileView
+	partsView PartsView
+	width     int
+	height    int
 }
 
 // New starts in browser mode at the given directory.
@@ -67,6 +69,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.browser = m.browser.resize(msg.Width, msg.Height)
 		m.fileView = m.fileView.resize(msg.Width, msg.Height)
+		m.partsView = m.partsView.resize(msg.Width, msg.Height)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -90,8 +93,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modeFileView
 		return m, fv.watchCmd()
 
+	case openPartsMsg:
+		m.partsView = newPartsView(msg.path, msg.file, msg.req, m.width, m.height)
+		m.mode = modePartsView
+		return m, nil
+
 	case backMsg:
-		m.mode = modeBrowser
+		switch m.mode {
+		case modePartsView:
+			m.mode = modeFileView
+			m.fileView.watchDone = make(chan struct{})
+			var cmd tea.Cmd
+			m.fileView, cmd = m.fileView.handleFileChanged()
+			return m, cmd
+		default:
+			m.mode = modeBrowser
+		}
 		return m, nil
 	}
 
@@ -104,6 +121,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.fileView, cmd = m.fileView.update(msg)
 		return m, cmd
+	case modePartsView:
+		var cmd tea.Cmd
+		m.partsView, cmd = m.partsView.update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -114,6 +135,8 @@ func (m Model) View() string {
 		return m.browser.view()
 	case modeFileView:
 		return m.fileView.view()
+	case modePartsView:
+		return m.partsView.view()
 	}
 	return ""
 }

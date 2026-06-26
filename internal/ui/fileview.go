@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -21,6 +22,9 @@ import (
 
 // fileChangedMsg is sent when the watched .http file is modified on disk.
 type fileChangedMsg struct{}
+
+// editFileDoneMsg is sent after an external editor session finishes.
+type editFileDoneMsg struct{ err error }
 
 // requestDoneMsg is sent by a background tea.Cmd when an HTTP request finishes.
 type requestDoneMsg struct {
@@ -155,6 +159,11 @@ func (fv FileView) update(msg tea.Msg) (FileView, tea.Cmd) {
 		return fv.handleFileChanged()
 	}
 
+	// Handle external editor finishing.
+	if done, ok := msg.(editFileDoneMsg); ok {
+		return fv.handleEditFileDone(done)
+	}
+
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		// Non-key messages (scroll events, etc.) go straight to the viewport.
@@ -206,6 +215,19 @@ func (fv FileView) update(msg tea.Msg) (FileView, tea.Cmd) {
 			fv = fv.withScrollAdjusted().withSyncedPreview()
 		}
 
+	case "enter", "l":
+		if n > 0 {
+			if fv.watchDone != nil {
+				close(fv.watchDone)
+				fv.watchDone = nil
+			}
+			file := fv.file
+			req := file.Requests[fv.filtered[fv.cursor]]
+			return fv, func() tea.Msg {
+				return openPartsMsg{path: file.Path, file: file, req: req}
+			}
+		}
+
 	case "r":
 		if !fv.working && n > 0 {
 			fv.working = true
@@ -219,6 +241,22 @@ func (fv FileView) update(msg tea.Msg) (FileView, tea.Cmd) {
 			return fv, fv.cmdRun("test")
 		}
 	case "e":
+		if !fv.working && fv.file != nil {
+			if fv.watchDone != nil {
+				close(fv.watchDone)
+				fv.watchDone = nil
+			}
+			return fv, fv.cmdEditFile()
+		}
+	case "E":
+		if !fv.working && n > 0 {
+			if fv.watchDone != nil {
+				close(fv.watchDone)
+				fv.watchDone = nil
+			}
+			return fv, fv.cmdEditRequest()
+		}
+	case "x":
 		if !fv.working && n > 0 {
 			fv.working = true
 			fv.statusMsg = "running…"
@@ -238,6 +276,63 @@ func (fv FileView) update(msg tea.Msg) (FileView, tea.Cmd) {
 		return fv, cmd
 	}
 	return fv, nil
+}
+
+// cmdEditFile suspends the TUI and opens the whole .http file in $EDITOR.
+func (fv FileView) cmdEditFile() tea.Cmd {
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+	return tea.ExecProcess(exec.Command(editor, fv.file.Path), func(err error) tea.Msg {
+		return editFileDoneMsg{err: err}
+	})
+}
+
+// cmdEditRequest suspends the TUI and opens the selected request block in $EDITOR.
+func (fv FileView) cmdEditRequest() tea.Cmd {
+	if len(fv.filtered) == 0 || fv.file == nil {
+		return nil
+	}
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+	req := fv.file.Requests[fv.filtered[fv.cursor]]
+	block, err := writer.ExtractRequestBlock(fv.file.Path, req.Name)
+	if err != nil {
+		return func() tea.Msg { return editFileDoneMsg{err: err} }
+	}
+	tmp, err := os.CreateTemp("", "h77p-*.http")
+	if err != nil {
+		return func() tea.Msg { return editFileDoneMsg{err: err} }
+	}
+	_, _ = tmp.WriteString(block)
+	tmp.Close()
+	tmpPath := tmp.Name()
+	filePath := fv.file.Path
+	reqName := req.Name
+	return tea.ExecProcess(exec.Command(editor, tmpPath), func(err error) tea.Msg {
+		if err != nil {
+			os.Remove(tmpPath)
+			return editFileDoneMsg{err: err}
+		}
+		data, readErr := os.ReadFile(tmpPath)
+		os.Remove(tmpPath)
+		if readErr != nil {
+			return editFileDoneMsg{err: readErr}
+		}
+		return editFileDoneMsg{err: writer.SaveRequestBlock(filePath, reqName, string(data))}
+	})
+}
+
+// handleEditFileDone processes the result of an external editor session.
+func (fv FileView) handleEditFileDone(msg editFileDoneMsg) (FileView, tea.Cmd) {
+	if msg.err != nil {
+		fv.statusMsg = "edit error: " + msg.err.Error()
+	}
+	fv.watchDone = make(chan struct{})
+	return fv.handleFileChanged()
 }
 
 // cmdRun fires a background tea.Cmd that runs the currently selected request.
@@ -381,7 +476,7 @@ func (fv FileView) statusLine() string {
 		return styleStatusBar.Width(fv.width).Render(fv.statusMsg)
 	}
 
-	hint := "r run  t test  e save example  j/k move  g/G top/bot  ctrl+d/u scroll  / search  h/esc back  q quit"
+	hint := "enter/l inspect  r run  t test  e edit file  E edit req  x save example  j/k move  g/G top/bot  ctrl+d/u scroll  / search  h/esc back  q quit"
 	if fv.statusMsg != "" {
 		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("[" + fv.statusMsg + "]")
 		hint = tag + "  " + hint
