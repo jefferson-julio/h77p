@@ -43,7 +43,7 @@ h77p test <file>          # run all requests that have test blocks
 
 A `.http` file contains one or more requests separated by `### Request Name` lines.
 
-```http
+```txt
 # File-level comment
 
 @baseUrl = https://api.example.com    # file-level variable
@@ -104,7 +104,7 @@ Variable resolution order (last wins): `.env` files → `@var` declarations → 
 
 Append one or more `@jq` lines after the headers/body to pipe the JSON response through `jq`. Filters are chained.
 
-```http
+```txt
 GET https://api.example.com/posts
 
 @jq .[]
@@ -118,7 +118,7 @@ Requires `jq` in PATH and a JSON `Content-Type` response. The filtered result is
 
 Save an offline example response to show in the TUI when no live run has been made. The block is written in raw HTTP response format:
 
-```http
+```txt
 @example {%
   HTTP/1.1 200 OK
   Content-Type: application/json
