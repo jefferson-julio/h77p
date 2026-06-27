@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	leftPanelRatio = 3 // left panel takes 1/leftPanelRatio of total width
-	headerHeight   = 1
-	statusHeight   = 1
+	leftPanelRatio   = 3  // left panel takes 1/leftPanelRatio of total width
+	narrowThreshold  = 100 // below this width the layout switches to top/bottom
+	headerHeight     = 1
+	statusHeight     = 1
 	panelPadding   = 0
 )
 
@@ -81,6 +82,8 @@ func initStyles() {
 	}
 }
 
+func narrowMode(w int) bool { return w < narrowThreshold }
+
 func leftWidth(total int) int {
 	return total / leftPanelRatio
 }
@@ -91,6 +94,16 @@ func rightWidth(total int) int {
 
 func contentHeight(total int) int {
 	return total - headerHeight - statusHeight - panelPadding
+}
+
+// narrowTopHeight returns the number of rows given to the selector+env strip
+// in narrow (stacked) mode. The rest goes to the tabview.
+func narrowTopHeight(contentH int) int {
+	h := contentH * 2 / 5
+	if h < 6 {
+		h = 6
+	}
+	return h
 }
 
 // renderTabBar draws the five right-panel tabs and returns a line of width w.

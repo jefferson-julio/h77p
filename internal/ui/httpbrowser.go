@@ -147,13 +147,21 @@ type HttpBrowser struct {
 	watchModTime time.Time
 }
 
+func previewDims(w, h int) (pw, ph int) {
+	ch := max(contentHeight(h), 1)
+	if narrowMode(w) {
+		topH := narrowTopHeight(ch)
+		return max(w, 1), max(ch-topH-1, 1)
+	}
+	return max(rightWidth(w), 1), max(ch-1, 1)
+}
+
 func newHttpBrowser(path string, w, h int) (HttpBrowser, error) {
 	file, err := parser.ParseFile(path)
 	if err != nil {
 		return HttpBrowser{}, err
 	}
-	pw := max(rightWidth(w), 1)
-	ph := max(contentHeight(h)-1, 1)
+	pw, ph := previewDims(w, h)
 	hb := HttpBrowser{
 		file:           file,
 		filePath:       path,
@@ -176,8 +184,7 @@ func newHttpBrowser(path string, w, h int) (HttpBrowser, error) {
 
 func (hb HttpBrowser) resize(w, h int) HttpBrowser {
 	hb.width, hb.height = w, h
-	hb.preview.Width = max(rightWidth(w), 1)
-	hb.preview.Height = max(contentHeight(h)-1, 1)
+	hb.preview.Width, hb.preview.Height = previewDims(w, h)
 	return hb
 }
 
@@ -332,9 +339,31 @@ func envPanelHeight(contentH int) int {
 	return h
 }
 
-func (hb HttpBrowser) withTreeScrollAdjusted() HttpBrowser {
+// selectorHeight returns the number of rows available for the request tree or
+// parts list, accounting for the active layout (wide vs. narrow).
+func (hb HttpBrowser) selectorHeight() int {
 	ch := max(contentHeight(hb.height), 1)
-	listH := max(ch-envPanelHeight(ch), 1)
+	if narrowMode(hb.width) {
+		return max(narrowTopHeight(ch), 1)
+	}
+	return max(ch-envPanelHeight(ch), 1)
+}
+
+// envPanelVisibleRows returns how many variable rows are visible in the env
+// panel (panel height minus the header row), accounting for layout mode.
+func (hb HttpBrowser) envPanelVisibleRows() int {
+	ch := max(contentHeight(hb.height), 1)
+	var panelH int
+	if narrowMode(hb.width) {
+		panelH = narrowTopHeight(ch)
+	} else {
+		panelH = envPanelHeight(ch)
+	}
+	return max(panelH-1, 0)
+}
+
+func (hb HttpBrowser) withTreeScrollAdjusted() HttpBrowser {
+	listH := hb.selectorHeight()
 	if hb.treeCursor < hb.treeScroll {
 		hb.treeScroll = hb.treeCursor
 	} else if hb.treeCursor >= hb.treeScroll+listH {
@@ -372,9 +401,7 @@ func (hb HttpBrowser) envMoveCursor(delta int) HttpBrowser {
 	if hb.envCursor >= n {
 		hb.envCursor = n - 1
 	}
-	ch := max(contentHeight(hb.height), 1)
-	envH := envPanelHeight(ch)
-	visRows := max(envH-1, 0)
+	visRows := hb.envPanelVisibleRows()
 	if hb.envCursor < hb.envScroll {
 		hb.envScroll = hb.envCursor
 	} else if hb.envCursor >= hb.envScroll+visRows {
@@ -1163,6 +1190,19 @@ func (hb HttpBrowser) handleEditDone(msg partsEditDoneMsg) (HttpBrowser, tea.Cmd
 // View
 // ---------------------------------------------------------------------------
 
+func (hb HttpBrowser) headerText() string {
+	if hb.depth == depthParts {
+		if hb.activeReq.Name != "" {
+			return hb.activeReq.Name
+		}
+		return hb.activeReq.Method + " " + hb.activeReq.URL
+	}
+	if hb.file != nil {
+		return filepath.Base(hb.filePath)
+	}
+	return "(no file)"
+}
+
 func (hb HttpBrowser) view() string {
 	if hb.width == 0 {
 		return ""
@@ -1173,35 +1213,61 @@ func (hb HttpBrowser) view() string {
 		}
 		return renderHelpOverlay(hb.width, hb.height, helpFileView)
 	}
+	if narrowMode(hb.width) {
+		return hb.viewNarrow()
+	}
+	return hb.viewWide()
+}
 
+func (hb HttpBrowser) viewWide() string {
 	lw := leftWidth(hb.width)
 	rw := rightWidth(hb.width)
 	ch := max(contentHeight(hb.height), 1)
 	envH := envPanelHeight(ch)
 	listH := ch - envH
 
-	var headerText string
-	if hb.depth == depthParts {
-		headerText = hb.activeReq.Name
-		if headerText == "" {
-			headerText = hb.activeReq.Method + " " + hb.activeReq.URL
-		}
-	} else {
-		if hb.file != nil {
-			headerText = filepath.Base(hb.filePath)
-		} else {
-			headerText = "(no file)"
-		}
-	}
-	header := styleHeader.Width(hb.width).Render(headerText)
-
+	header := styleHeader.Width(hb.width).Render(hb.headerText())
 	left := append(hb.buildLeftLines(lw, listH), hb.buildEnvLines(lw, envH)...)
 	tabBar := renderTabBar(hb.activeTab, rw)
 	vpLines := strings.Split(hb.preview.View(), "\n")
 	right := append([]string{tabBar}, vpLines...)
 	body := zipPanels(left, right, lw, rw, ch)
-
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, hb.statusLine())
+}
+
+func (hb HttpBrowser) viewNarrow() string {
+	ch := max(contentHeight(hb.height), 1)
+	topH := narrowTopHeight(ch)
+	botH := ch - topH
+
+	// Top strip: selector (left half) | env (right half)
+	selectorW := hb.width / 2
+	envW := hb.width - selectorW - 1 // -1 for divider
+	selectorLines := hb.buildLeftLines(selectorW, topH)
+	envLines := hb.buildEnvLines(envW, topH)
+	top := zipPanels(selectorLines, envLines, selectorW, envW, topH)
+
+	// Bottom strip: full-width tabbar + viewport
+	blankLine := strings.Repeat(" ", hb.width)
+	botRows := make([]string, botH)
+	for i := range botRows {
+		botRows[i] = blankLine
+	}
+	botRows[0] = renderTabBar(hb.activeTab, hb.width)
+	for i, line := range strings.Split(hb.preview.View(), "\n") {
+		if i+1 >= botH {
+			break
+		}
+		vw := lipgloss.Width(line)
+		if vw < hb.width {
+			line += strings.Repeat(" ", hb.width-vw)
+		}
+		botRows[i+1] = line
+	}
+	bot := strings.Join(botRows, "\n")
+
+	header := styleHeader.Width(hb.width).Render(hb.headerText())
+	return lipgloss.JoinVertical(lipgloss.Left, header, top, bot, hb.statusLine())
 }
 
 func (hb HttpBrowser) buildLeftLines(w, h int) []string {
