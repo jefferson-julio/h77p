@@ -24,7 +24,6 @@ go build -o h77p .
 
 ```sh
 h77p                      # open TUI browser in current directory
-h77p ui                   # same, explicit subcommand
 h77p run <file> [name]    # run a single request by name
 h77p test <file>          # run all requests that have test blocks
 ```
@@ -40,6 +39,7 @@ h77p test <file>          # run all requests that have test blocks
 - **Example responses**: save an offline `@example` block per request; shown in the TUI when no live run exists
 - **File watching**: the TUI reloads automatically when the `.http` file changes on disk
 - **External editor**: open the whole file or a single request block in `$EDITOR`
+- **External body viewer**: open the response body in [otree](https://github.com/fioncat/otree), fallback to [jless](https://github.com/PaulJuliusMartinez/jless), then `less`.
 
 ## .http File Format
 
