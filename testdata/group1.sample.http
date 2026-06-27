@@ -1,5 +1,5 @@
 ### Get Single Post
-GET {{baseUrl}}/posts/1
+GET /posts/1
 Accept: application/json
 
 @jq .body

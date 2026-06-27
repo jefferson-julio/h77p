@@ -1,7 +1,7 @@
-@baseUrl = https://jsonplaceholder.typicode.com
+@host = https://jsonplaceholder.typicode.com
 
 ### Get All Posts
-GET {{baseUrl}}/posts
+GET /posts
 Accept: application/json
 
 @post-response {%
@@ -44,7 +44,7 @@ Content-Type: application/json; charset=utf-8
 
 @testId = 123
 
-POST {{baseUrl}}/posts
+POST /posts
 Content-Type: application/json
 
 {
@@ -64,7 +64,7 @@ Content-Type: application/json
 %}
 
 ### Get Created Post
-GET {{baseUrl}}/posts/{{createdId}}
+GET /posts/{{createdId}}
 Accept: application/json
 
 @post-response {%

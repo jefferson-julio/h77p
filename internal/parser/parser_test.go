@@ -382,7 +382,7 @@ func TestSampleFile(t *testing.T) {
 	if len(f.Variables) != 1 {
 		t.Errorf("variables: got %d, want 1", len(f.Variables))
 	}
-	if f.Variables[0].Name != "baseUrl" {
+	if f.Variables[0].Name != "host" {
 		t.Errorf("variable name: got %q", f.Variables[0].Name)
 	}
 
@@ -398,7 +398,7 @@ func TestSampleFile(t *testing.T) {
 		if r.Method != "GET" {
 			t.Errorf("method: %q", r.Method)
 		}
-		if r.URL != "{{baseUrl}}/posts" {
+		if r.URL != "/posts" {
 			t.Errorf("url: %q", r.URL)
 		}
 		if len(r.Headers) != 1 || r.Headers[0].Name != "Accept" {
@@ -442,7 +442,7 @@ func TestSampleFile(t *testing.T) {
 		if r.Name != "Get Created Post" {
 			t.Errorf("name: %q", r.Name)
 		}
-		if r.URL != "{{baseUrl}}/posts/{{createdId}}" {
+		if r.URL != "/posts/{{createdId}}" {
 			t.Errorf("url: %q", r.URL)
 		}
 	})

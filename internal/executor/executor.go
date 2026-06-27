@@ -27,6 +27,11 @@ type Result struct {
 
 func Execute(req *httpfile.Request, vars map[string]string) (*Result, error) {
 	url := interpolate(req.URL, vars)
+	if strings.HasPrefix(url, "/") {
+		if host, ok := vars["host"]; ok && host != "" {
+			url = strings.TrimRight(host, "/") + url
+		}
+	}
 	body := interpolate(req.Body, vars)
 
 	// x-www-form-urlencoded bodies are often written one param per line for

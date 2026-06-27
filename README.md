@@ -84,6 +84,16 @@ Content-Type: application/json
 
   {"id": 42, "name": "Alice"}
 %}
+
+### Post Group
+@import ./posts.http
+
+### Status
+GET {{baseUrl}}/status
+Accept: application/json
+
+### Photos Group
+@import ./photos.http
 ```
 
 ### Variables
@@ -128,6 +138,52 @@ Save an offline example response to show in the TUI when no live run has been ma
 ```
 
 Press `x` in the TUI to run the request and save its response (or jq output) as the example automatically.
+
+### `@import` Directives
+
+Group your requests into separate `.http` files and import them as groups. Nested groups are supported.
+
+```txt
+# root.http
+
+### Group 1
+@import ./group1.http
+
+### Group 2
+@import ./group2.http
+
+# group1.http
+
+### Login
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+### Group 3
+@import ./group3.http
+```
+
+### `@host` Variable
+
+Use it as the host in all request that start with /.
+
+```txt
+@host = https://api.example.com
+
+### Login
+POST /login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "secret"
+}
+
+### Status
+@apiVersion = v1
+
+GET /{{apiVersion}}/status
+Accept: application/json
+```
 
 ## JavaScript Scripting API
 
