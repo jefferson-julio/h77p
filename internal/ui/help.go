@@ -67,7 +67,7 @@ var (
 			{"ctrl+d / u", "scroll preview"},
 			{"/", "search requests"},
 		}},
-		{title: "Actions", binds: [][2]string{
+		{title: "Actions (request list)", binds: [][2]string{
 			{"enter / l", "expand group or inspect parts"},
 			{"r", "run request"},
 			{"t", "run with tests"},
@@ -77,6 +77,11 @@ var (
 			{"x", "save example"},
 			{"h / esc", "go back"},
 			{"q", "quit"},
+		}},
+		{title: "Actions (env panel)", binds: [][2]string{
+			{"j / k", "move cursor"},
+			{"e / enter", "edit value in $EDITOR (session only)"},
+			{"tab / esc", "return to request list"},
 		}},
 	}
 
@@ -89,7 +94,7 @@ var (
 			{"j / k", "move / scroll (focused panel)"},
 			{"ctrl+d / u", "scroll preview"},
 		}},
-		{title: "Actions", binds: [][2]string{
+		{title: "Actions (parts list)", binds: [][2]string{
 			{"e / enter / l", "edit selected part"},
 			{"r", "run request"},
 			{"t", "run with tests"},
@@ -97,6 +102,11 @@ var (
 			{"x", "save example"},
 			{"h / esc", "go back"},
 			{"q", "quit"},
+		}},
+		{title: "Actions (env panel)", binds: [][2]string{
+			{"j / k", "move cursor"},
+			{"e / enter", "edit value in $EDITOR (session only)"},
+			{"tab / esc", "return to parts list"},
 		}},
 	}
 )

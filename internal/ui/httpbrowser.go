@@ -89,6 +89,11 @@ type partsEditDoneMsg struct {
 	content string
 	err     error
 }
+type envEditDoneMsg struct {
+	key   string
+	value string
+	err   error
+}
 
 // ---------------------------------------------------------------------------
 // HttpBrowser model
@@ -130,6 +135,7 @@ type HttpBrowser struct {
 	// ── env panel ─────────────────────────────────────────────────────────────
 	env       map[string]string
 	envFocus  bool
+	envCursor int
 	envScroll int
 
 	// ── file watcher ──────────────────────────────────────────────────────────
@@ -333,17 +339,42 @@ func (hb HttpBrowser) withTreeScrollAdjusted() HttpBrowser {
 	return hb
 }
 
-func (hb HttpBrowser) envScrollBy(delta int) HttpBrowser {
+func sortedEnvKeys(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func (hb HttpBrowser) selectedEnvKey() (string, bool) {
+	keys := sortedEnvKeys(hb.env)
+	if len(keys) == 0 || hb.envCursor >= len(keys) {
+		return "", false
+	}
+	return keys[hb.envCursor], true
+}
+
+func (hb HttpBrowser) envMoveCursor(delta int) HttpBrowser {
+	n := len(hb.env)
+	if n == 0 {
+		return hb
+	}
+	hb.envCursor += delta
+	if hb.envCursor < 0 {
+		hb.envCursor = 0
+	}
+	if hb.envCursor >= n {
+		hb.envCursor = n - 1
+	}
 	ch := max(contentHeight(hb.height), 1)
 	envH := envPanelHeight(ch)
 	visRows := max(envH-1, 0)
-	maxScroll := max(len(hb.env)-visRows, 0)
-	hb.envScroll += delta
-	if hb.envScroll < 0 {
-		hb.envScroll = 0
-	}
-	if hb.envScroll > maxScroll {
-		hb.envScroll = maxScroll
+	if hb.envCursor < hb.envScroll {
+		hb.envScroll = hb.envCursor
+	} else if hb.envCursor >= hb.envScroll+visRows {
+		hb.envScroll = hb.envCursor - visRows + 1
 	}
 	return hb
 }
@@ -362,6 +393,8 @@ func (hb HttpBrowser) update(msg tea.Msg) (HttpBrowser, tea.Cmd) {
 		return hb.handleEditFileDone(m)
 	case partsEditDoneMsg:
 		return hb.handleEditDone(m)
+	case envEditDoneMsg:
+		return hb.handleEnvEditDone(m)
 	case bodyViewerDoneMsg:
 		if m.err != nil {
 			hb.status = "viewer: " + m.err.Error()
@@ -401,6 +434,24 @@ func (hb HttpBrowser) updateTree(key tea.KeyMsg) (HttpBrowser, tea.Cmd) {
 		return hb, nil
 	}
 
+	// When env panel is focused only env-panel keys are handled; everything else
+	// is swallowed so no request action fires accidentally.
+	if hb.envFocus {
+		switch key.String() {
+		case "tab", "esc":
+			hb.envFocus = false
+		case "j", "down":
+			hb = hb.envMoveCursor(1)
+		case "k", "up":
+			hb = hb.envMoveCursor(-1)
+		case "e", "enter":
+			if k, ok := hb.selectedEnvKey(); ok {
+				return hb, hb.cmdEditEnvVar(k, hb.env[k])
+			}
+		}
+		return hb, nil
+	}
+
 	n := len(hb.visible)
 
 	switch key.String() {
@@ -428,29 +479,23 @@ func (hb HttpBrowser) updateTree(key tea.KeyMsg) (HttpBrowser, tea.Cmd) {
 		hb = hb.withSyncedPreview()
 
 	case "tab":
-		hb.envFocus = !hb.envFocus
+		hb.envFocus = true
 
 	case "j", "down":
-		if hb.envFocus {
-			hb = hb.envScrollBy(1)
-		} else if hb.treeCursor < n-1 {
+		if hb.treeCursor < n-1 {
 			hb.treeCursor++
 			hb = hb.withTreeScrollAdjusted().withSyncedPreview()
 		}
 	case "k", "up":
-		if hb.envFocus {
-			hb = hb.envScrollBy(-1)
-		} else if hb.treeCursor > 0 {
+		if hb.treeCursor > 0 {
 			hb.treeCursor--
 			hb = hb.withTreeScrollAdjusted().withSyncedPreview()
 		}
 	case "g":
-		if !hb.envFocus {
-			hb.treeCursor = 0
-			hb = hb.withTreeScrollAdjusted().withSyncedPreview()
-		}
+		hb.treeCursor = 0
+		hb = hb.withTreeScrollAdjusted().withSyncedPreview()
 	case "G":
-		if !hb.envFocus && n > 0 {
+		if n > 0 {
 			hb.treeCursor = n - 1
 			hb = hb.withTreeScrollAdjusted().withSyncedPreview()
 		}
@@ -570,6 +615,22 @@ func (hb HttpBrowser) updateTree(key tea.KeyMsg) (HttpBrowser, tea.Cmd) {
 }
 
 func (hb HttpBrowser) updateParts(key tea.KeyMsg) (HttpBrowser, tea.Cmd) {
+	if hb.envFocus {
+		switch key.String() {
+		case "tab", "esc":
+			hb.envFocus = false
+		case "j", "down":
+			hb = hb.envMoveCursor(1)
+		case "k", "up":
+			hb = hb.envMoveCursor(-1)
+		case "e", "enter":
+			if k, ok := hb.selectedEnvKey(); ok {
+				return hb, hb.cmdEditEnvVar(k, hb.env[k])
+			}
+		}
+		return hb, nil
+	}
+
 	switch key.String() {
 	case "?":
 		hb.helpOpen = true
@@ -591,19 +652,15 @@ func (hb HttpBrowser) updateParts(key tea.KeyMsg) (HttpBrowser, tea.Cmd) {
 		hb = hb.withSyncedPreview()
 
 	case "tab":
-		hb.envFocus = !hb.envFocus
+		hb.envFocus = true
 
 	case "j", "down":
-		if hb.envFocus {
-			hb = hb.envScrollBy(1)
-		} else if hb.partsCursor < 4 {
+		if hb.partsCursor < 4 {
 			hb.partsCursor++
 			hb = hb.withSyncedPreview()
 		}
 	case "k", "up":
-		if hb.envFocus {
-			hb = hb.envScrollBy(-1)
-		} else if hb.partsCursor > 0 {
+		if hb.partsCursor > 0 {
 			hb.partsCursor--
 			hb = hb.withSyncedPreview()
 		}
@@ -761,6 +818,38 @@ func cmdOpenBody(body string) tea.Cmd {
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return bodyViewerDoneMsg{err: err}
 	})
+}
+
+func (hb HttpBrowser) cmdEditEnvVar(key, value string) tea.Cmd {
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+	tmp, err := os.CreateTemp("", "h77p-env-*")
+	if err != nil {
+		return func() tea.Msg { return envEditDoneMsg{key: key, err: err} }
+	}
+	_, _ = tmp.WriteString(value)
+	tmp.Close()
+	tmpPath := tmp.Name()
+	return tea.ExecProcess(exec.Command(editor, tmpPath), func(err error) tea.Msg {
+		defer os.Remove(tmpPath)
+		if err != nil {
+			return envEditDoneMsg{key: key, err: err}
+		}
+		data, _ := os.ReadFile(tmpPath)
+		return envEditDoneMsg{key: key, value: strings.TrimRight(string(data), "\n\r")}
+	})
+}
+
+func (hb HttpBrowser) handleEnvEditDone(m envEditDoneMsg) (HttpBrowser, tea.Cmd) {
+	if m.err == nil && m.key != "" {
+		if hb.env == nil {
+			hb.env = make(map[string]string)
+		}
+		hb.env[m.key] = m.value
+	}
+	return hb, nil
 }
 
 func cmdPollFile(path string, modTime time.Time, done <-chan struct{}) tea.Cmd {
@@ -1067,7 +1156,7 @@ func (hb HttpBrowser) buildLeftLinesParts(w, h int) []string {
 }
 
 func (hb HttpBrowser) buildEnvLines(w, h int) []string {
-	return renderEnvPanel(hb.env, hb.envFocus, hb.envScroll, w, h)
+	return renderEnvPanel(hb.env, hb.envFocus, hb.envScroll, hb.envCursor, w, h)
 }
 
 func (hb HttpBrowser) statusLine() string {
@@ -1084,10 +1173,12 @@ func (hb HttpBrowser) statusLine() string {
 	}
 
 	var hint string
-	if hb.depth == depthParts {
-		hint = base.Render("e edit  r run  o open body  j/k parts  ? help")
+	if hb.envFocus {
+		hint = base.Render("j/k move  e/enter edit value  tab/esc back to list")
+	} else if hb.depth == depthParts {
+		hint = base.Render("e edit  r run  o open body  j/k parts  tab env  ? help")
 	} else {
-		hint = base.Render("r run  e edit request  E edit file  enter inspect  / search  ? help")
+		hint = base.Render("r run  e edit request  E edit file  enter inspect  / search  tab env  ? help")
 	}
 
 	var prefixes []string

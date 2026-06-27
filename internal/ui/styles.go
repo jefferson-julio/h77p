@@ -111,7 +111,7 @@ func renderTabBar(activeTab, w int) string {
 // renderEnvPanel renders the env state panel into exactly h rows of visual width w.
 // Row 0 is a focus-sensitive header; rows 1..h-1 are scrollable variable entries.
 // This is shared between FileView and PartsView.
-func renderEnvPanel(env map[string]string, focused bool, scroll, w, h int) []string {
+func renderEnvPanel(env map[string]string, focused bool, scroll, cursor, w, h int) []string {
 	lines := make([]string, h)
 	blank := strings.Repeat(" ", w)
 	for i := range lines {
@@ -172,9 +172,13 @@ func renderEnvPanel(env map[string]string, focused bool, scroll, w, h int) []str
 		k := keys[dataIdx]
 		v := env[k]
 		line := "  " + clrKeyword.Render(k) + styleDim.Render(" = ") + clrHeaderVal.Render(v)
-		lines[screenIdx] = lipgloss.NewStyle().Width(w).Render(
-			ansi.Truncate(line, w, ""),
-		)
+		if focused && dataIdx == cursor {
+			lines[screenIdx] = styleCursor.Width(w).Render(ansi.Truncate("  "+k+" = "+v, w, ""))
+		} else {
+			lines[screenIdx] = lipgloss.NewStyle().Width(w).Render(
+				ansi.Truncate(line, w, ""),
+			)
+		}
 	}
 	return lines
 }

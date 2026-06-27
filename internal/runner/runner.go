@@ -109,9 +109,12 @@ func RunAll(file *httpfile.File, vars map[string]string) ([]*Result, error) {
 }
 
 func runOne(req *httpfile.Request, vars map[string]string) (*Result, error) {
-	// Request-level variables override file-level and .env variables.
+	// Request-level @variable declarations fill in vars only when absent,
+	// so user session edits take priority over file-declared defaults.
 	for _, v := range req.Variables {
-		vars[v.Name] = v.Value
+		if _, exists := vars[v.Name]; !exists {
+			vars[v.Name] = v.Value
+		}
 	}
 
 	// shallow copy so pre-script mutations don't modify the parsed file
@@ -250,11 +253,14 @@ func seedEnvVars(file *httpfile.File, vars map[string]string) {
 	}
 }
 
-// seedFileVars copies file-level @variable declarations into vars. HTTP file
-// variables take precedence over .env values, so they always overwrite.
+// seedFileVars copies file-level @variable declarations into vars only when a
+// key is not already present. This lets session edits (env panel) take priority
+// while still populating variables that have no value yet.
 func seedFileVars(file *httpfile.File, vars map[string]string) {
 	for _, v := range file.Variables {
-		vars[v.Name] = v.Value
+		if _, exists := vars[v.Name]; !exists {
+			vars[v.Name] = v.Value
+		}
 	}
 }
 
