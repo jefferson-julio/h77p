@@ -311,6 +311,34 @@ func findRequestInFile(file *httpfile.File, name string) (httpfile.Request, *htt
 	return httpfile.Request{}, nil, false
 }
 
+// findRequestByFilePath searches file and all nested group files for a specific
+// file path, then looks for name within that file. This lets IPC `run` commands
+// that include a `file` field target the exact file the user is editing, even
+// when it is not imported by the root file.
+func findRequestByFilePath(root *httpfile.File, filePath, name string) (httpfile.Request, *httpfile.File, bool) {
+	var search func(f *httpfile.File) (httpfile.Request, *httpfile.File, bool)
+	search = func(f *httpfile.File) (httpfile.Request, *httpfile.File, bool) {
+		if f.Path == filePath {
+			for _, req := range f.Requests {
+				if req.Name == name {
+					return req, f, true
+				}
+			}
+			return httpfile.Request{}, nil, false
+		}
+		for _, g := range f.Groups {
+			if g.File == nil {
+				continue
+			}
+			if req, found, ok := search(g.File); ok {
+				return req, found, ok
+			}
+		}
+		return httpfile.Request{}, nil, false
+	}
+	return search(root)
+}
+
 // refreshActiveReq updates activeReq/activeFile/activePath from the freshly
 // reloaded file tree, matching by request name.
 func (hb HttpBrowser) refreshActiveReq() HttpBrowser {
@@ -802,9 +830,33 @@ func (hb HttpBrowser) handleIPCCommand(cmd ipc.Command) (HttpBrowser, tea.Cmd) {
 		if cmd.Request == "" {
 			break
 		}
-		req, file, ok := findRequestInFile(hb.file, cmd.Request)
-		if !ok {
-			break
+		var (
+			req  httpfile.Request
+			file *httpfile.File
+			ok   bool
+		)
+		if cmd.File != "" {
+			// Try to find the request in the specific file the editor is on.
+			// This handles the case where the user is editing a file that is not
+			// the root file the TUI was opened with (or not yet imported by it).
+			req, file, ok = findRequestByFilePath(hb.file, cmd.File, cmd.Request)
+			if !ok {
+				// File is not in the current tree — parse it independently.
+				parsed, err := parser.ParseFile(cmd.File)
+				if err != nil {
+					break
+				}
+				req, _, ok = findRequestInFile(parsed, cmd.Request)
+				if !ok {
+					break
+				}
+				file = parsed
+			}
+		} else {
+			req, file, ok = findRequestInFile(hb.file, cmd.Request)
+			if !ok {
+				break
+			}
 		}
 		hb.activeReq = req
 		hb.activeFile = file
@@ -812,8 +864,17 @@ func (hb HttpBrowser) handleIPCCommand(cmd ipc.Command) (HttpBrowser, tea.Cmd) {
 		hb.working = true
 		hb.status = "running…"
 		hb = hb.focusByName(cmd.Request)
+		// Capture the cmd before withSyncedPreview runs: that method overwrites
+		// activeReq/activeFile from the selected tree node (tabRequest default
+		// branch), which clobbers our assignment above when focusByName couldn't
+		// move the cursor (e.g. target request is inside a collapsed group).
+		runCmd := hb.cmdRunActive("run")
 		hb = hb.withSyncedPreview()
-		return hb, hb.cmdRunActive("run")
+		// Restore in case withSyncedPreview overwrote them.
+		hb.activeReq = req
+		hb.activeFile = file
+		hb.activePath = file.Path
+		return hb, runCmd
 
 	case "focus":
 		if cmd.Request != "" {

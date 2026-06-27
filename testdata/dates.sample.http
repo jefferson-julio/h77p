@@ -1,0 +1,14 @@
+### Dates
+
+@pre-request {%
+  set("name", fake.firstName())
+  set("birth", date.now().subtract(26, "y").subtract(6, "month").add(5, "d").toISOString());
+%}
+
+POST https://echo.free.beeceptor.com
+Content-Type: application/json
+
+{
+  "name": "{{name}}",
+  "birthdate": "{{birth}}"
+}

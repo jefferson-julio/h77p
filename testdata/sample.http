@@ -76,3 +76,7 @@ Accept: application/json
 ### XML
 
 @import ./xml.sample.http
+
+### Dates
+
+@import ./dates.sample.http
