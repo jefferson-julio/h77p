@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/jefferson-julio/h77p/internal/executor"
 	"github.com/jefferson-julio/h77p/internal/httpfile"
+	"github.com/jefferson-julio/h77p/internal/ipc"
 	"github.com/jefferson-julio/h77p/internal/parser"
 	"github.com/jefferson-julio/h77p/internal/runner"
 	"github.com/jefferson-julio/h77p/internal/writer"
@@ -137,6 +138,9 @@ type HttpBrowser struct {
 	envFocus  bool
 	envCursor int
 	envScroll int
+
+	// ── IPC ───────────────────────────────────────────────────────────────────
+	ipcServer *ipc.Server
 
 	// ── file watcher ──────────────────────────────────────────────────────────
 	watchDone    chan struct{}
@@ -485,19 +489,23 @@ func (hb HttpBrowser) updateTree(key tea.KeyMsg) (HttpBrowser, tea.Cmd) {
 		if hb.treeCursor < n-1 {
 			hb.treeCursor++
 			hb = hb.withTreeScrollAdjusted().withSyncedPreview()
+			return hb, hb.cmdIPCCursor()
 		}
 	case "k", "up":
 		if hb.treeCursor > 0 {
 			hb.treeCursor--
 			hb = hb.withTreeScrollAdjusted().withSyncedPreview()
+			return hb, hb.cmdIPCCursor()
 		}
 	case "g":
 		hb.treeCursor = 0
 		hb = hb.withTreeScrollAdjusted().withSyncedPreview()
+		return hb, hb.cmdIPCCursor()
 	case "G":
 		if n > 0 {
 			hb.treeCursor = n - 1
 			hb = hb.withTreeScrollAdjusted().withSyncedPreview()
+			return hb, hb.cmdIPCCursor()
 		}
 
 	case "enter", "l":
@@ -715,6 +723,102 @@ func (hb HttpBrowser) updateParts(key tea.KeyMsg) (HttpBrowser, tea.Cmd) {
 // Commands
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// IPC helpers
+// ---------------------------------------------------------------------------
+
+// cmdIPCSend returns a tea.Cmd that writes e to the IPC client. Returns nil
+// (no-op) when srv is nil or no client is connected.
+func cmdIPCSend(srv *ipc.Server, e ipc.Event) tea.Cmd {
+	if srv == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		_ = srv.Send(e)
+		return nil
+	}
+}
+
+// cmdIPCCursor returns a tea.Cmd emitting a "cursor" event for the currently
+// selected tree node, or nil if the node is not a request or IPC is inactive.
+func (hb HttpBrowser) cmdIPCCursor() tea.Cmd {
+	if hb.ipcServer == nil || len(hb.visible) == 0 {
+		return nil
+	}
+	node := hb.treeItems[hb.visible[hb.treeCursor]]
+	if node.kind != nodeKindRequest {
+		return nil
+	}
+	return cmdIPCSend(hb.ipcServer, ipc.Event{
+		Event:   "cursor",
+		File:    node.reqPath,
+		Request: node.req.Name,
+	})
+}
+
+// focusByName moves treeCursor to the first visible request with the given
+// name. No-op if the name is not found.
+func (hb HttpBrowser) focusByName(name string) HttpBrowser {
+	for i, idx := range hb.visible {
+		node := hb.treeItems[idx]
+		if node.kind == nodeKindRequest && node.req.Name == name {
+			hb.treeCursor = i
+			hb = hb.withTreeScrollAdjusted()
+			return hb
+		}
+	}
+	return hb
+}
+
+// handleIPCCommand dispatches a command received from the IPC client.
+func (hb HttpBrowser) handleIPCCommand(cmd ipc.Command) (HttpBrowser, tea.Cmd) {
+	switch cmd.Cmd {
+	case "run":
+		if cmd.Request == "" {
+			break
+		}
+		req, file, ok := findRequestInFile(hb.file, cmd.Request)
+		if !ok {
+			break
+		}
+		hb.activeReq = req
+		hb.activeFile = file
+		hb.activePath = file.Path
+		hb.working = true
+		hb.status = "running…"
+		hb = hb.focusByName(cmd.Request)
+		hb = hb.withSyncedPreview()
+		return hb, hb.cmdRunActive("run")
+
+	case "focus":
+		if cmd.Request != "" {
+			hb = hb.focusByName(cmd.Request)
+			hb = hb.withSyncedPreview()
+		}
+
+	case "get_state":
+		return hb, cmdIPCSend(hb.ipcServer, ipc.Event{
+			Event:   "state",
+			File:    hb.filePath,
+			Request: hb.activeReq.Name,
+			Env:     copyEnv(hb.env),
+		})
+
+	case "set_env", "save_edit":
+		if cmd.Key != "" {
+			if hb.env == nil {
+				hb.env = make(map[string]string)
+			}
+			val := cmd.Value
+			if cmd.Cmd == "save_edit" {
+				val = cmd.Content
+			}
+			hb.env[cmd.Key] = val
+		}
+	}
+	return hb, nil
+}
+
 func (hb HttpBrowser) cmdRunActive(action string) tea.Cmd {
 	if hb.activeFile == nil {
 		return nil
@@ -729,6 +833,9 @@ func (hb HttpBrowser) cmdRunActive(action string) tea.Cmd {
 }
 
 func (hb HttpBrowser) cmdEditWholeFile(filePath string) tea.Cmd {
+	if hb.ipcServer != nil && hb.ipcServer.Connected() {
+		return cmdIPCSend(hb.ipcServer, ipc.Event{Event: "open_file", File: filePath})
+	}
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = "vi"
@@ -739,6 +846,15 @@ func (hb HttpBrowser) cmdEditWholeFile(filePath string) tea.Cmd {
 }
 
 func (hb HttpBrowser) cmdEditRequestBlock(filePath, reqName string) tea.Cmd {
+	if hb.ipcServer != nil && hb.ipcServer.Connected() {
+		line, _ := writer.FindRequestLine(filePath, reqName)
+		return cmdIPCSend(hb.ipcServer, ipc.Event{
+			Event:   "open_file",
+			File:    filePath,
+			Request: reqName,
+			Line:    line,
+		})
+	}
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = "vi"
@@ -766,12 +882,38 @@ func (hb HttpBrowser) cmdEditRequestBlock(filePath, reqName string) tea.Cmd {
 }
 
 func (hb HttpBrowser) cmdEditPart() tea.Cmd {
+	kind := hb.partsCursor
+	content := hb.partsEditorContent()
+
+	if hb.ipcServer != nil && hb.ipcServer.Connected() && hb.activeFile != nil {
+		var prefix string
+		switch kind {
+		case partRequest:
+			prefix = "" // locate the HTTP method line
+		case partPreScript:
+			prefix = "@pre-request"
+		case partJQ:
+			prefix = "@jq"
+		case partPostScript:
+			prefix = "@post-response"
+		case partExample:
+			prefix = "@example"
+		}
+		filePath := hb.activeFile.Path
+		reqName := hb.activeReq.Name
+		line, _ := writer.FindPartLine(filePath, reqName, prefix)
+		return cmdIPCSend(hb.ipcServer, ipc.Event{
+			Event:   "open_file",
+			File:    filePath,
+			Request: reqName,
+			Line:    line,
+		})
+	}
+
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = "vi"
 	}
-	kind := hb.partsCursor
-	content := hb.partsEditorContent()
 	ext := ".http"
 	switch kind {
 	case partPreScript, partPostScript:
@@ -821,6 +963,9 @@ func cmdOpenBody(body string) tea.Cmd {
 }
 
 func (hb HttpBrowser) cmdEditEnvVar(key, value string) tea.Cmd {
+	if hb.ipcServer != nil && hb.ipcServer.Connected() {
+		return cmdIPCSend(hb.ipcServer, ipc.Event{Event: "open_edit", Key: key, Value: value})
+	}
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = "vi"
@@ -922,6 +1067,17 @@ func (hb HttpBrowser) handleRequestDone(msg requestDoneMsg) (HttpBrowser, tea.Cm
 	}
 
 	hb = hb.withSyncedPreview()
+
+	if hb.ipcServer != nil && msg.result != nil && msg.result.HTTP != nil {
+		return hb, cmdIPCSend(hb.ipcServer, ipc.Event{
+			Event:      "request_done",
+			File:       hb.activePath,
+			Request:    hb.activeReq.Name,
+			Status:     msg.result.HTTP.StatusCode,
+			DurationMs: msg.result.HTTP.Duration.Milliseconds(),
+			Passed:     msg.result.Passed,
+		})
+	}
 	return hb, nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/jefferson-julio/h77p/internal/ipc"
 )
 
 type mode uint8
@@ -28,6 +29,7 @@ type Model struct {
 	width       int
 	height      int
 	env         map[string]string // session variables — persist set() results across requests
+	ipcServer   *ipc.Server
 }
 
 // copyEnv returns a shallow copy of m, safe to pass to a goroutine.
@@ -91,6 +93,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
+	case ipc.Msg:
+		if m.mode == modeHttpBrowser {
+			var cmd tea.Cmd
+			m.httpBrowser, cmd = m.httpBrowser.handleIPCCommand(msg.Cmd)
+			return m, cmd
+		}
+		return m, nil
+
 	case openFileMsg:
 		hb, err := newHttpBrowser(msg.path, m.width, m.height)
 		if err != nil {
@@ -102,6 +112,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for k, v := range m.env {
 			hb.env[k] = v
 		}
+		hb.ipcServer = m.ipcServer
 		m.httpBrowser = hb
 		m.mode = modeHttpBrowser
 		return m, tea.Batch(hb.watchCmd(), tea.ClearScreen)
@@ -136,23 +147,34 @@ func (m Model) View() string {
 }
 
 // Start launches the TUI in browser mode at the given directory.
-func Start(cwd string) error {
+// srv may be nil when IPC is not in use.
+func Start(cwd string, srv *ipc.Server) error {
 	m, err := New(cwd)
 	if err != nil {
 		return err
 	}
+	m.ipcServer = srv
 	p := tea.NewProgram(m, tea.WithAltScreen())
+	if srv != nil {
+		srv.SetProgram(p)
+	}
 	_, err = p.Run()
 	return err
 }
 
 // StartAtFile launches the TUI directly in http-browser mode for a .http file.
-func StartAtFile(path string) error {
+// srv may be nil when IPC is not in use.
+func StartAtFile(path string, srv *ipc.Server) error {
 	m, err := NewAtFile(path)
 	if err != nil {
 		return err
 	}
+	m.ipcServer = srv
+	m.httpBrowser.ipcServer = srv
 	p := tea.NewProgram(m, tea.WithAltScreen())
+	if srv != nil {
+		srv.SetProgram(p)
+	}
 	_, err = p.Run()
 	return err
 }

@@ -130,6 +130,51 @@ func isHTTPBlockTag(line string) bool {
 	return t == "@pre-request {%" || t == "@post-response {%" || t == "@example {%"
 }
 
+// FindRequestLine returns the 1-based line number of the ### requestName
+// separator in the file at path. Useful for jumping an editor to the right
+// position. Returns 0 if the request is not found.
+func FindRequestLine(path, requestName string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	src := strings.ReplaceAll(string(data), "\r\n", "\n")
+	lines := strings.Split(src, "\n")
+	blockStart, _, err := findSection(lines, requestName)
+	if err != nil {
+		return 0, err
+	}
+	return blockStart + 1, nil // convert 0-based index to 1-based line number
+}
+
+// FindPartLine returns the 1-based line number of a specific part within the
+// named request block, identified by its directive prefix (e.g. "@pre-request",
+// "@post-response", "@jq", "@example"). Pass an empty prefix to locate the HTTP
+// method line. Falls back to the ### separator line when the part is not found.
+func FindPartLine(path, requestName, directivePrefix string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	src := strings.ReplaceAll(string(data), "\r\n", "\n")
+	lines := strings.Split(src, "\n")
+	blockStart, blockEnd, err := findSection(lines, requestName)
+	if err != nil {
+		return 0, err
+	}
+	for i := blockStart + 1; i < blockEnd; i++ {
+		t := strings.TrimSpace(lines[i])
+		if directivePrefix == "" {
+			if isHTTPMethodLine(t) {
+				return i + 1, nil
+			}
+		} else if strings.HasPrefix(t, directivePrefix) {
+			return i + 1, nil
+		}
+	}
+	return blockStart + 1, nil // fallback: the ### separator line
+}
+
 // ExtractRequestBlock returns the raw lines for the named request block
 // (from ### Name inclusive to the next ### exclusive).
 func ExtractRequestBlock(path, requestName string) (string, error) {

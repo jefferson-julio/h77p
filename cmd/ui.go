@@ -18,12 +18,12 @@ var uiCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			return ui.StartAtFile(abs)
+			return ui.StartAtFile(abs, nil)
 		}
 		cwd, err := os.Getwd()
 		if err != nil {
 			return err
 		}
-		return ui.Start(cwd)
+		return ui.Start(cwd, nil)
 	},
 }
