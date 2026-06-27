@@ -90,7 +90,7 @@ Content-Type: application/json
 
 Declare variables at file level with `@name = value`. Reference them anywhere in the request with `{{name}}`. Variables set by `set()` in a post-response script are available to all subsequent requests in the session.
 
-```http
+```txt
 @baseUrl = https://api.example.com
 @token   = secret
 
