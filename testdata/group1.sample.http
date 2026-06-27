@@ -1,0 +1,13 @@
+### Get Single Post
+GET {{baseUrl}}/posts/1
+Accept: application/json
+
+@jq .body
+
+@post-response {%
+  test("Status is 200", () => {
+    assert(response.status === 200, "expected 200");
+  });
+%}
+### Comments
+@import ./group2.sample.http

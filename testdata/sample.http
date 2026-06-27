@@ -30,6 +30,10 @@ Content-Type: application/json; charset=utf-8
 ]
 %}
 
+### Group 1
+
+@import ./group1.sample.http
+
 ### Create Post
 
 # this is a comment

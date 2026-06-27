@@ -1,0 +1,9 @@
+### Get Comments
+GET {{baseUrl}}/posts/1/comments
+Accept: application/json
+
+@post-response {%
+  test("Status is 200", () => {
+    assert(response.status === 200, "expected 200");
+  });
+%}

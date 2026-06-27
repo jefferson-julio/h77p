@@ -24,23 +24,34 @@ type Result struct {
 }
 
 // SeedEnv pre-populates vars with .env file contents and file-level @variable
-// declarations. Useful for showing the variable state before any request runs.
+// declarations, including variables from any imported group files.
 func SeedEnv(file *httpfile.File, vars map[string]string) {
 	seedEnvVars(file, vars)
 	seedFileVars(file, vars)
+	for _, g := range file.Groups {
+		if g.File != nil {
+			SeedEnv(g.File, vars)
+		}
+	}
 }
 
-// Run executes a single named request from file. If requestName is empty the
-// first request is used.
+// Run executes a single named request from file, searching top-level requests
+// and then group requests. If requestName is empty the first available request
+// is used.
 func Run(file *httpfile.File, requestName string, vars map[string]string) (*Result, error) {
 	seedEnvVars(file, vars)
 	seedFileVars(file, vars)
 
 	if requestName == "" {
-		if len(file.Requests) == 0 {
-			return nil, fmt.Errorf("no requests in file")
+		if len(file.Requests) > 0 {
+			return runOne(&file.Requests[0], vars)
 		}
-		return runOne(&file.Requests[0], vars)
+		for _, g := range file.Groups {
+			if g.File != nil && len(g.File.Requests) > 0 {
+				return runOne(&g.File.Requests[0], vars)
+			}
+		}
+		return nil, fmt.Errorf("no requests in file")
 	}
 
 	for i := range file.Requests {
@@ -48,16 +59,27 @@ func Run(file *httpfile.File, requestName string, vars map[string]string) (*Resu
 			return runOne(&file.Requests[i], vars)
 		}
 	}
+	for _, g := range file.Groups {
+		if g.File == nil {
+			continue
+		}
+		for i := range g.File.Requests {
+			if g.File.Requests[i].Name == requestName {
+				return runOne(&g.File.Requests[i], vars)
+			}
+		}
+	}
 	return nil, fmt.Errorf("request %q not found", requestName)
 }
 
-// RunAll executes every request in file sequentially. Variables written by
-// set() in one post-script are visible to subsequent requests.
+// RunAll executes every request in file sequentially: top-level requests first,
+// then each group's requests in order. Variables written by set() in one
+// post-script are visible to subsequent requests.
 func RunAll(file *httpfile.File, vars map[string]string) ([]*Result, error) {
 	seedEnvVars(file, vars)
 	seedFileVars(file, vars)
 
-	results := make([]*Result, 0, len(file.Requests))
+	var results []*Result
 	for i := range file.Requests {
 		r, err := runOne(&file.Requests[i], vars)
 		if err != nil {
@@ -66,6 +88,21 @@ func RunAll(file *httpfile.File, vars map[string]string) ([]*Result, error) {
 		results = append(results, r)
 		if r.Err != nil {
 			return results, r.Err
+		}
+	}
+	for _, g := range file.Groups {
+		if g.File == nil {
+			continue
+		}
+		for i := range g.File.Requests {
+			r, err := runOne(&g.File.Requests[i], vars)
+			if err != nil {
+				return results, err
+			}
+			results = append(results, r)
+			if r.Err != nil {
+				return results, r.Err
+			}
 		}
 	}
 	return results, nil

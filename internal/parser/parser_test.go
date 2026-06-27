@@ -62,14 +62,77 @@ func TestParseVariables(t *testing.T) {
 	}
 }
 
-func TestParseImport(t *testing.T) {
+func TestImportAtFileLevelIgnored(t *testing.T) {
+	// A top-level @import (without a preceding ### Name) is silently ignored.
 	src := "@import ./auth.http\n\n### Ping\nGET /ping\n"
 	f, err := parser.ParseString(src, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(f.Imports) != 1 || f.Imports[0] != "./auth.http" {
-		t.Errorf("imports: got %v", f.Imports)
+	if len(f.Groups) != 0 {
+		t.Errorf("expected no groups for top-level @import, got %d", len(f.Groups))
+	}
+	if len(f.Requests) != 1 {
+		t.Errorf("expected 1 request, got %d", len(f.Requests))
+	}
+}
+
+func TestGroupImport(t *testing.T) {
+	// ### Name + @import creates a Group. Since path="" the file load fails silently;
+	// the group is still created with File==nil.
+	src := "### Auth Group\n@import ./auth.http\n\n### Ping\nGET /ping\n"
+	f, err := parser.ParseString(src, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(f.Groups) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(f.Groups))
+	}
+	g := f.Groups[0]
+	if g.Name != "Auth Group" {
+		t.Errorf("group name: got %q", g.Name)
+	}
+	if g.Source != "./auth.http" {
+		t.Errorf("group source: got %q", g.Source)
+	}
+	// File is nil because path is "" and the import cannot be resolved.
+	if g.File != nil {
+		t.Errorf("expected nil File for unresolvable import")
+	}
+	if len(f.Requests) != 1 || f.Requests[0].Name != "Ping" {
+		t.Errorf("expected 1 top-level request 'Ping', got %v", f.Requests)
+	}
+}
+
+func TestNestedGroupImport(t *testing.T) {
+	// Verifies that groups inside imported files are themselves parsed as groups.
+	// sample.http → group1.sample.http (has a nested ### Comments @import group2)
+	f, err := parser.ParseFile("../../testdata/sample.http")
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(f.Groups) != 1 {
+		t.Fatalf("expected 1 top-level group, got %d", len(f.Groups))
+	}
+	g1 := f.Groups[0]
+	if g1.Name != "Group 1" {
+		t.Errorf("group name: got %q, want %q", g1.Name, "Group 1")
+	}
+	if g1.File == nil {
+		t.Fatal("group1 file not loaded")
+	}
+	if len(g1.File.Groups) != 1 {
+		t.Fatalf("expected 1 nested group inside group1, got %d", len(g1.File.Groups))
+	}
+	g2 := g1.File.Groups[0]
+	if g2.Name != "Comments" {
+		t.Errorf("nested group name: got %q, want %q", g2.Name, "Comments")
+	}
+	if g2.File == nil {
+		t.Fatal("group2 file not loaded")
+	}
+	if len(g2.File.Requests) == 0 {
+		t.Error("expected requests in group2 file")
 	}
 }
 

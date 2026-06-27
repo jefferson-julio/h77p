@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/jefferson-julio/h77p/internal/httpfile"
@@ -69,10 +70,8 @@ func (p *p) parse() (*httpfile.File, error) {
 		p.pos++
 		switch {
 		case line == "":
-		case strings.HasPrefix(line, "#"): // comment — skip
-		case strings.HasPrefix(line, "@import "):
-			imp := strings.TrimSpace(strings.TrimPrefix(line, "@import "))
-			file.Imports = append(file.Imports, imp)
+		case strings.HasPrefix(line, "#"):  // comment — skip
+		case strings.HasPrefix(line, "@import "): // top-level @import without a group name — ignored
 		case strings.HasPrefix(line, "@"):
 			if v, err := parseVarDecl(line); err == nil {
 				file.Variables = append(file.Variables, v)
@@ -87,14 +86,59 @@ func (p *p) parse() (*httpfile.File, error) {
 			continue
 		}
 		name := strings.TrimSpace(strings.TrimPrefix(line, "###"))
+
+		// Check whether this block is a group import: ### Name followed by @import path.
+		if importPath, ok := p.peekImport(); ok {
+			p.consumeImport()
+			g := httpfile.Group{Name: name, Source: importPath}
+			if p.path != "" {
+				absPath := filepath.Join(filepath.Dir(p.path), importPath)
+				if imported, err := ParseFile(absPath); err == nil {
+					g.File = imported
+				}
+				// Silently skip unresolvable imports; Group.File stays nil.
+			}
+			file.Groups = append(file.Groups, g)
+			file.Items = append(file.Items, httpfile.FileItem{IsGroup: true, Index: len(file.Groups) - 1})
+			continue
+		}
+
 		req, err := p.parseRequest(name)
 		if err != nil {
 			return nil, err
 		}
 		file.Requests = append(file.Requests, req)
+		file.Items = append(file.Items, httpfile.FileItem{IsGroup: false, Index: len(file.Requests) - 1})
 	}
 
 	return file, nil
+}
+
+// peekImport looks ahead from p.pos, skipping blank lines and # comments, and
+// returns the import path if the next substantive line is an @import directive.
+func (p *p) peekImport() (path string, ok bool) {
+	for i := p.pos; i < len(p.lines); i++ {
+		line := strings.TrimSpace(p.lines[i])
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "@import ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "@import ")), true
+		}
+		return "", false
+	}
+	return "", false
+}
+
+// consumeImport advances p.pos past the @import line (and any preceding blank/comment lines).
+func (p *p) consumeImport() {
+	for !p.eof() {
+		line := strings.TrimSpace(p.peek())
+		p.pos++
+		if strings.HasPrefix(line, "@import ") {
+			return
+		}
+	}
 }
 
 // parseRequest consumes lines for one request block (stops at the next ### or EOF).
