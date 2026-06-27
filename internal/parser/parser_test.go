@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jefferson-julio/h77p/internal/httpfile"
 	"github.com/jefferson-julio/h77p/internal/parser"
 )
 
@@ -111,12 +112,19 @@ func TestNestedGroupImport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	if len(f.Groups) != 1 {
-		t.Fatalf("expected 1 top-level group, got %d", len(f.Groups))
+	var g1 *httpfile.Group
+	for i := range f.Groups {
+		if f.Groups[i].Name == "Group 1" {
+			g1 = &f.Groups[i]
+			break
+		}
 	}
-	g1 := f.Groups[0]
-	if g1.Name != "Group 1" {
-		t.Errorf("group name: got %q, want %q", g1.Name, "Group 1")
+	if g1 == nil {
+		t.Fatalf("group %q not found in top-level groups %v", "Group 1", func() []string {
+			var names []string
+			for _, g := range f.Groups { names = append(names, g.Name) }
+			return names
+		}())
 	}
 	if g1.File == nil {
 		t.Fatal("group1 file not loaded")

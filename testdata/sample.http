@@ -72,3 +72,7 @@ Accept: application/json
   	assert(response.status === 200);
   });
 %}
+
+### XML
+
+@import ./xml.sample.http

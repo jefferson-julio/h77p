@@ -1,0 +1,24 @@
+### Echo XML
+
+@pre-request {%
+  set("to", fake.name());
+%}
+
+POST https://echo.free.beeceptor.com
+Content-Type: application/xml
+
+<note>
+  <to>{{to}}</to>
+  <from>Me</from>
+  <heading>Reminder</heading>
+  <body>Don't forget me this weekend!</body>
+</note>
+
+@post-response {%
+  test("Status is 200", () => {
+    assert(response.status === 200, "expected 200");
+  });
+
+  const body = xml.parse(response.json().parsedBody);
+  log(body.findAll("to")[0].text);
+%}

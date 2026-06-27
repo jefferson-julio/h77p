@@ -33,6 +33,16 @@ func formatLogValue(vm *goja.Runtime, v goja.Value) string {
 	return v.String()
 }
 
+// registerUtilLibs registers the xml, fake, and date globals into a VM.
+// Called from both RunPreRequest and RunPostResponse so scripts at any stage
+// can generate fake data, manipulate dates, or parse XML responses.
+func registerUtilLibs(vm *goja.Runtime) {
+	registerXML(vm)
+	registerFake(vm)
+	registerDate(vm)
+	registerJWT(vm)
+}
+
 func registerStdlib(vm *goja.Runtime, results *[]*TestResult, env map[string]string, logs *[]string) {
 	vm.Set("test", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 2 {
@@ -87,4 +97,6 @@ func registerStdlib(vm *goja.Runtime, results *[]*TestResult, env map[string]str
 		*logs = append(*logs, formatLogValue(vm, call.Arguments[0]))
 		return goja.Undefined()
 	})
+
+	registerUtilLibs(vm)
 }

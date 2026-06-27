@@ -21,6 +21,13 @@ func (e *Engine) RunPreRequest(src string, ctx *PreContext) error {
 		}
 		return goja.Undefined()
 	})
+	vm.Set("set", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) >= 2 {
+			ctx.Env[call.Arguments[0].String()] = call.Arguments[1].String()
+		}
+		return goja.Undefined()
+	})
+	registerUtilLibs(vm)
 	if _, err := vm.RunString(src); err != nil {
 		return err
 	}
