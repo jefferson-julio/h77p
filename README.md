@@ -1,3 +1,5 @@
+![Demo](./demo.gif)
+
 # h77p
 
 A terminal HTTP client driven by `.http` files. Browse and run requests from a keyboard-driven TUI, chain requests with a JavaScript scripting API, and keep offline example responses alongside your definitions.
