@@ -143,8 +143,8 @@ type HttpBrowser struct {
 	ipcServer *ipc.Server
 
 	// ── file watcher ──────────────────────────────────────────────────────────
-	watchDone    chan struct{}
-	watchModTime time.Time
+	watchDone  chan struct{}
+	watchTimes map[string]time.Time // path → last-known mod time for all watched files
 }
 
 func previewDims(w, h int) (pw, ph int) {
@@ -173,9 +173,7 @@ func newHttpBrowser(path string, w, h int) (HttpBrowser, error) {
 		expandedGroups: make(map[string]bool),
 	}
 	runner.SeedEnv(hb.file, hb.env)
-	if info, err := os.Stat(path); err == nil {
-		hb.watchModTime = info.ModTime()
-	}
+	hb.watchTimes = collectWatchTimes(file)
 	hb.treeItems = buildTree(file, hb.expandedGroups, 0)
 	hb = hb.rebuildVisible()
 	hb = hb.withSyncedPreview()
@@ -192,7 +190,7 @@ func (hb HttpBrowser) watchCmd() tea.Cmd {
 	if hb.watchDone == nil || hb.file == nil {
 		return nil
 	}
-	return cmdPollFile(hb.filePath, hb.watchModTime, hb.watchDone)
+	return cmdPollFiles(hb.watchTimes, hb.watchDone)
 }
 
 // ---------------------------------------------------------------------------
@@ -1024,7 +1022,30 @@ func (hb HttpBrowser) handleEnvEditDone(m envEditDoneMsg) (HttpBrowser, tea.Cmd)
 	return hb, nil
 }
 
-func cmdPollFile(path string, modTime time.Time, done <-chan struct{}) tea.Cmd {
+// collectWatchTimes builds a map of path → current mod time for the root file
+// and every file imported (directly or transitively) via @import groups.
+func collectWatchTimes(file *httpfile.File) map[string]time.Time {
+	times := make(map[string]time.Time)
+	var walk func(f *httpfile.File)
+	walk = func(f *httpfile.File) {
+		if f == nil || f.Path == "" {
+			return
+		}
+		if _, seen := times[f.Path]; seen {
+			return
+		}
+		if info, err := os.Stat(f.Path); err == nil {
+			times[f.Path] = info.ModTime()
+		}
+		for _, g := range f.Groups {
+			walk(g.File)
+		}
+	}
+	walk(file)
+	return times
+}
+
+func cmdPollFiles(times map[string]time.Time, done <-chan struct{}) tea.Cmd {
 	return func() tea.Msg {
 		ticker := time.NewTicker(300 * time.Millisecond)
 		defer ticker.Stop()
@@ -1033,9 +1054,10 @@ func cmdPollFile(path string, modTime time.Time, done <-chan struct{}) tea.Cmd {
 			case <-done:
 				return nil
 			case <-ticker.C:
-				info, err := os.Stat(path)
-				if err == nil && info.ModTime().After(modTime) {
-					return fileChangedMsg{}
+				for path, mod := range times {
+					if info, err := os.Stat(path); err == nil && info.ModTime().After(mod) {
+						return fileChangedMsg{}
+					}
 				}
 			}
 		}
@@ -1149,10 +1171,8 @@ func (hb HttpBrowser) handleFileChanged() (HttpBrowser, tea.Cmd) {
 		hb = hb.withSyncedPreview()
 	}
 
-	if info, err := os.Stat(hb.filePath); err == nil {
-		hb.watchModTime = info.ModTime()
-	}
-	return hb, cmdPollFile(hb.filePath, hb.watchModTime, hb.watchDone)
+	hb.watchTimes = collectWatchTimes(hb.file)
+	return hb, cmdPollFiles(hb.watchTimes, hb.watchDone)
 }
 
 func (hb HttpBrowser) handleEditFileDone(msg editFileDoneMsg) (HttpBrowser, tea.Cmd) {

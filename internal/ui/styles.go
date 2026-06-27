@@ -82,7 +82,44 @@ func initStyles() {
 	}
 }
 
-func narrowMode(w int) bool { return w < narrowThreshold }
+// LayoutMode controls whether the left/right or top/bottom layout is used.
+type LayoutMode int
+
+const (
+	LayoutAuto       LayoutMode = iota // switch at narrowThreshold
+	LayoutHorizontal                   // always left/right split
+	LayoutVertical                     // always top/bottom split
+)
+
+var activeLayout LayoutMode
+
+// InitLayout sets the global layout mode (call once at startup).
+func InitLayout(m LayoutMode) { activeLayout = m }
+
+// LayoutByName returns the LayoutMode for s ("auto", "horizontal", "vertical"),
+// reporting ok=false for unrecognised values.
+func LayoutByName(s string) (LayoutMode, bool) {
+	switch s {
+	case "auto":
+		return LayoutAuto, true
+	case "horizontal":
+		return LayoutHorizontal, true
+	case "vertical":
+		return LayoutVertical, true
+	}
+	return LayoutAuto, false
+}
+
+func narrowMode(w int) bool {
+	switch activeLayout {
+	case LayoutHorizontal:
+		return false
+	case LayoutVertical:
+		return true
+	default:
+		return w < narrowThreshold
+	}
+}
 
 func leftWidth(total int) int {
 	return total / leftPanelRatio

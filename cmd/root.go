@@ -11,6 +11,7 @@ import (
 
 var themeName string
 var socketPath string
+var layoutName string
 
 var rootCmd = &cobra.Command{
 	Use:   "h77p [file.http]",
@@ -19,6 +20,9 @@ var rootCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if t, ok := ui.ThemeByName(themeName); ok {
 			ui.InitTheme(t)
+		}
+		if l, ok := ui.LayoutByName(layoutName); ok {
+			ui.InitLayout(l)
 		}
 		var srv *ipc.Server
 		if socketPath != "" {
@@ -47,6 +51,7 @@ func Execute() error {
 func init() {
 	rootCmd.PersistentFlags().StringVar(&themeName, "theme", "catppuccin", "colour theme: monokai, nord, catppuccin")
 	rootCmd.PersistentFlags().StringVar(&socketPath, "socket", os.Getenv("H77P_SOCKET"), "Unix socket path for IPC (default: $H77P_SOCKET)")
+	rootCmd.PersistentFlags().StringVar(&layoutName, "layout", "auto", "panel layout: auto, horizontal (left/right), vertical (top/bottom)")
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(testCmd)
 	rootCmd.AddCommand(uiCmd)
