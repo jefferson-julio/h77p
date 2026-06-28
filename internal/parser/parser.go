@@ -17,16 +17,37 @@ var httpMethods = map[string]bool{
 
 // ParseFile reads a .http file from disk and parses it.
 func ParseFile(path string) (*httpfile.File, error) {
-	data, err := os.ReadFile(path)
+	abs, err := filepath.Abs(path)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", path, err)
+		return nil, fmt.Errorf("resolve %s: %w", path, err)
 	}
-	return ParseString(string(data), path)
+	return parseFileGuarded(abs, nil)
+}
+
+// parseFileGuarded is the internal entry point that carries an ancestor set to
+// detect circular @import chains. ancestors is nil-safe (treated as empty).
+func parseFileGuarded(absPath string, ancestors map[string]bool) (*httpfile.File, error) {
+	if ancestors[absPath] {
+		return nil, fmt.Errorf("circular import: %s", absPath)
+	}
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", absPath, err)
+	}
+	// Build child ancestor set: copy parent set and add self.
+	next := make(map[string]bool, len(ancestors)+1)
+	for k := range ancestors {
+		next[k] = true
+	}
+	next[absPath] = true
+	src := strings.ReplaceAll(string(data), "\r\n", "\n")
+	p := &p{lines: strings.Split(src, "\n"), path: absPath, ancestors: next}
+	return p.parse()
 }
 
 // ParseString parses a .http file from a string. path is stored in File.Path.
+// No circular import detection is performed (no disk I/O, no path resolution).
 func ParseString(src, path string) (*httpfile.File, error) {
-	// Normalise CRLF so all logic only sees LF.
 	src = strings.ReplaceAll(src, "\r\n", "\n")
 	p := &p{lines: strings.Split(src, "\n"), path: path}
 	return p.parse()
@@ -37,9 +58,10 @@ func ParseString(src, path string) (*httpfile.File, error) {
 // ---------------------------------------------------------------------------
 
 type p struct {
-	lines []string
-	pos   int
-	path  string
+	lines     []string
+	pos       int
+	path      string
+	ancestors map[string]bool // abs paths of files currently being parsed (cycle guard)
 }
 
 func (p *p) eof() bool    { return p.pos >= len(p.lines) }
@@ -93,10 +115,13 @@ func (p *p) parse() (*httpfile.File, error) {
 			g := httpfile.Group{Name: name, Source: importPath}
 			if p.path != "" {
 				absPath := filepath.Join(filepath.Dir(p.path), importPath)
-				if imported, err := ParseFile(absPath); err == nil {
-					g.File = imported
+				absPath, err := filepath.Abs(absPath)
+				if err == nil {
+					if imported, err := parseFileGuarded(absPath, p.ancestors); err == nil {
+						g.File = imported
+					}
+					// Silently skip unresolvable or circular imports; Group.File stays nil.
 				}
-				// Silently skip unresolvable imports; Group.File stays nil.
 			}
 			file.Groups = append(file.Groups, g)
 			file.Items = append(file.Items, httpfile.FileItem{IsGroup: true, Index: len(file.Groups) - 1})

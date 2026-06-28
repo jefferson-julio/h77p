@@ -1,6 +1,8 @@
 package parser_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -454,4 +456,54 @@ func TestSampleFile(t *testing.T) {
 			t.Errorf("url: %q", r.URL)
 		}
 	})
+}
+
+func TestCircularImport(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "self.http")
+	content := "### Self Import\n@import " + filepath.Base(path) + "\n\n### Req\nGET /ok\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := parser.ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	// The circular import group should be present but with a nil File (skipped).
+	for _, g := range f.Groups {
+		if g.File != nil {
+			t.Errorf("circular import group should have nil File, got %+v", g.File)
+		}
+	}
+}
+
+func TestMutualCircularImport(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.http")
+	b := filepath.Join(dir, "b.http")
+	if err := os.WriteFile(a, []byte("### B Group\n@import b.http\n\n### A Req\nGET /a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte("### A Group\n@import a.http\n\n### B Req\nGET /b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := parser.ParseFile(a)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	// b is imported successfully; a re-imported from b is the circular leg (nil File).
+	if len(f.Groups) == 0 {
+		t.Fatal("expected at least one group")
+	}
+	bGroup := f.Groups[0]
+	if bGroup.File == nil {
+		t.Fatal("first-level import (b.http) should parse successfully")
+	}
+	// b.http's group (re-importing a.http) should be circular → nil File.
+	if len(bGroup.File.Groups) == 0 {
+		t.Fatal("b.http should have a group referencing a.http")
+	}
+	if bGroup.File.Groups[0].File != nil {
+		t.Errorf("back-edge import (a.http from b.http) should have nil File")
+	}
 }
