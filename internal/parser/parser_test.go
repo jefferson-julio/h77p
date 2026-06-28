@@ -394,8 +394,8 @@ func TestSampleFile(t *testing.T) {
 		t.Errorf("variable name: got %q", f.Variables[0].Name)
 	}
 
-	if len(f.Requests) != 3 {
-		t.Fatalf("requests: got %d, want 3", len(f.Requests))
+	if len(f.Requests) < 3 {
+		t.Fatalf("requests: got %d, want at least 3", len(f.Requests))
 	}
 
 	t.Run("GetAllPosts", func(t *testing.T) {

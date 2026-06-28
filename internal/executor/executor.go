@@ -6,13 +6,51 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jefferson-julio/h77p/internal/httpfile"
 )
+
+// maxBodySize is the per-response body limit. Responses larger than this are
+// spilled to a temp file; Body holds the notice and BodyPath holds the file.
+var maxBodySize int64 = 1 << 20 // 1 MB default
+
+func SetMaxBodySize(n int64) { maxBodySize = n }
+
+// ParseBodySize parses a human-readable size string ("1MB", "512KB", "2GB",
+// or a raw byte count) and returns the number of bytes.
+func ParseBodySize(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	upper := strings.ToUpper(s)
+	units := []struct {
+		suffix string
+		mult   int64
+	}{
+		{"GB", 1 << 30},
+		{"MB", 1 << 20},
+		{"KB", 1 << 10},
+		{"B", 1},
+	}
+	for _, u := range units {
+		if strings.HasSuffix(upper, u.suffix) {
+			n, err := strconv.ParseInt(strings.TrimSpace(s[:len(s)-len(u.suffix)]), 10, 64)
+			if err != nil {
+				return 0, fmt.Errorf("invalid size %q: %w", s, err)
+			}
+			return n * u.mult, nil
+		}
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid size %q: %w", s, err)
+	}
+	return n, nil
+}
 
 var varRe = regexp.MustCompile(`\{\{([^}]+)\}\}`)
 
@@ -24,6 +62,7 @@ type Result struct {
 	Status     string // e.g. "200 OK"
 	Headers    map[string][]string
 	Body       string
+	BodyPath   string // non-empty when body exceeded maxBodySize and was spilled to disk
 	Duration   time.Duration
 }
 
@@ -83,7 +122,7 @@ func Execute(req *httpfile.Request, vars map[string]string) (*Result, error) {
 	defer resp.Body.Close()
 	duration := time.Since(start)
 
-	respBody, err := io.ReadAll(resp.Body)
+	body, bodyPath, err := readBodyWithLimit(resp.Body, maxBodySize)
 	if err != nil {
 		return nil, fmt.Errorf("read response body: %w", err)
 	}
@@ -100,9 +139,64 @@ func Execute(req *httpfile.Request, vars map[string]string) (*Result, error) {
 		StatusCode: resp.StatusCode,
 		Status:     resp.Status,
 		Headers:    headers,
-		Body:       string(respBody),
+		Body:       body,
+		BodyPath:   bodyPath,
 		Duration:   duration,
 	}, nil
+}
+
+// readBodyWithLimit reads r up to limit bytes. If the response fits within the
+// limit the body is returned as a string with an empty path. When the limit is
+// exceeded the full response is streamed to a temp file; the returned string is
+// a human-readable notice and path is the temp file location.
+func readBodyWithLimit(r io.Reader, limit int64) (body, path string, err error) {
+	if limit <= 0 {
+		data, err := io.ReadAll(r)
+		return string(data), "", err
+	}
+
+	// Read limit+1 bytes to detect overflow without buffering the whole response.
+	probe, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return "", "", err
+	}
+	if int64(len(probe)) <= limit {
+		return string(probe), "", nil
+	}
+
+	// Response exceeds limit — spill everything to a temp file.
+	f, err := os.CreateTemp("", "h77p-body-*")
+	if err != nil {
+		return "", "", fmt.Errorf("create temp file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write(probe); err != nil {
+		return "", "", err
+	}
+	// Stream the remainder directly to disk.
+	total := int64(len(probe))
+	n, err := io.Copy(f, r)
+	if err != nil {
+		return "", "", err
+	}
+	total += n
+
+	notice := fmt.Sprintf("[body too large (%s), stored at %s]", formatBodySize(total), f.Name())
+	return notice, f.Name(), nil
+}
+
+func formatBodySize(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1f KB", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
 }
 
 func isMultipartFormData(headers []httpfile.Header, vars map[string]string) bool {

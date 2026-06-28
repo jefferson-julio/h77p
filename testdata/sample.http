@@ -86,10 +86,10 @@ POST https://postman-echo.com/post
 Content-Type: multipart/form-data
 
 [boundary]
-Content-Disposition: form-data; name="file"; filename="demo.gif"
-Content-Type: image/gif
+Content-Disposition: form-data; name="file"; filename="test.png"
+Content-Type: image/png
 
-< ../demo.gif
+< ./test.png
 [boundary--]
 
 @post-response {%

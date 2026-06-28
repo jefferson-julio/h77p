@@ -622,17 +622,18 @@ func (hb HttpBrowser) updateTree(key tea.KeyMsg) (HttpBrowser, tea.Cmd) {
 		}
 
 	case "o":
-		body := ""
+		body, bodyPath := "", ""
 		if hb.lastResult != nil && hb.lastResult.HTTP != nil {
 			body = hb.lastResult.HTTP.Body
+			bodyPath = hb.lastResult.HTTP.BodyPath
 		}
-		if body == "" {
+		if body == "" && bodyPath == "" {
 			if node, ok := hb.selectedRequestNode(); ok && node.req.Example != nil {
 				body = node.req.Example.Body
 			}
 		}
-		if body != "" {
-			return hb, cmdOpenBody(body)
+		if body != "" || bodyPath != "" {
+			return hb, cmdOpenBody(body, bodyPath)
 		}
 
 	case "e":
@@ -730,15 +731,16 @@ func (hb HttpBrowser) updateParts(key tea.KeyMsg) (HttpBrowser, tea.Cmd) {
 		return hb, hb.cmdEditPart()
 
 	case "o":
-		body := ""
+		body, bodyPath := "", ""
 		if hb.lastResult != nil && hb.lastResult.HTTP != nil {
 			body = hb.lastResult.HTTP.Body
+			bodyPath = hb.lastResult.HTTP.BodyPath
 		}
-		if body == "" && hb.activeReq.Example != nil {
+		if body == "" && bodyPath == "" && hb.activeReq.Example != nil {
 			body = hb.activeReq.Example.Body
 		}
-		if body != "" {
-			return hb, cmdOpenBody(body)
+		if body != "" || bodyPath != "" {
+			return hb, cmdOpenBody(body, bodyPath)
 		}
 
 	case "r":
@@ -1025,8 +1027,11 @@ func (hb HttpBrowser) cmdEditPart() tea.Cmd {
 	})
 }
 
-func cmdOpenBody(body string) tea.Cmd {
-	if body == "" {
+// cmdOpenBody opens body content in an external viewer.
+// When bodyPath is non-empty the viewer receives the file directly (avoids
+// piping large or binary bodies through stdin).
+func cmdOpenBody(body, bodyPath string) tea.Cmd {
+	if body == "" && bodyPath == "" {
 		return nil
 	}
 	var program string
@@ -1040,6 +1045,12 @@ func cmdOpenBody(body string) tea.Cmd {
 		return func() tea.Msg {
 			return bodyViewerDoneMsg{err: fmt.Errorf("no body viewer found (tried: otree, jless, less)")}
 		}
+	}
+	if bodyPath != "" {
+		cmd := exec.Command(program, bodyPath)
+		return tea.ExecProcess(cmd, func(err error) tea.Msg {
+			return bodyViewerDoneMsg{err: err}
+		})
 	}
 	cmd := exec.Command(program)
 	cmd.Stdin = strings.NewReader(body)
@@ -1160,18 +1171,22 @@ func (hb HttpBrowser) handleRequestDone(msg requestDoneMsg) (HttpBrowser, tea.Cm
 	}
 
 	if msg.action == "example" && msg.result != nil && msg.result.HTTP != nil && hb.activePath != "" {
-		ex := httpResultToExample(msg.result.HTTP)
-		if msg.result.JQOutput != "" {
-			ex.Body = msg.result.JQOutput
-		}
-		if err := writer.SaveExample(hb.activePath, hb.activeReq.Name, ex); err != nil {
-			hb.status += "  (save failed: " + err.Error() + ")"
+		if msg.result.HTTP.BodyPath != "" {
+			hb.status += "  (body too large, example not saved)"
 		} else {
-			hb.status += "  ·  example saved"
-			if updated, err := parser.ParseFile(hb.filePath); err == nil {
-				hb.file = updated
-				hb = hb.rebuildTree()
-				hb = hb.refreshActiveReq()
+			ex := httpResultToExample(msg.result.HTTP)
+			if msg.result.JQOutput != "" {
+				ex.Body = msg.result.JQOutput
+			}
+			if err := writer.SaveExample(hb.activePath, hb.activeReq.Name, ex); err != nil {
+				hb.status += "  (save failed: " + err.Error() + ")"
+			} else {
+				hb.status += "  ·  example saved"
+				if updated, err := parser.ParseFile(hb.filePath); err == nil {
+					hb.file = updated
+					hb = hb.rebuildTree()
+					hb = hb.refreshActiveReq()
+				}
 			}
 		}
 	}

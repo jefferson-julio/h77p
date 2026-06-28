@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jefferson-julio/h77p/internal/executor"
 	"github.com/jefferson-julio/h77p/internal/ipc"
 	"github.com/jefferson-julio/h77p/internal/ui"
 	"github.com/spf13/cobra"
@@ -12,6 +13,7 @@ import (
 var themeName string
 var socketPath string
 var layoutName string
+var maxBodyStr string
 
 var rootCmd = &cobra.Command{
 	Use:   "h77p [file.http]",
@@ -23,6 +25,11 @@ var rootCmd = &cobra.Command{
 		}
 		if l, ok := ui.LayoutByName(layoutName); ok {
 			ui.InitLayout(l)
+		}
+		if maxBodyStr != "" {
+			if n, err := executor.ParseBodySize(maxBodyStr); err == nil {
+				executor.SetMaxBodySize(n)
+			}
 		}
 		var srv *ipc.Server
 		if socketPath != "" {
@@ -52,6 +59,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&themeName, "theme", "catppuccin", "colour theme: monokai, nord, catppuccin")
 	rootCmd.PersistentFlags().StringVar(&socketPath, "socket", os.Getenv("H77P_SOCKET"), "Unix socket path for IPC (default: $H77P_SOCKET)")
 	rootCmd.PersistentFlags().StringVar(&layoutName, "layout", "auto", "panel layout: auto, horizontal (left/right), vertical (top/bottom)")
+	rootCmd.PersistentFlags().StringVar(&maxBodyStr, "max-body", "1MB", "max response body size before spilling to disk (e.g. 512KB, 5MB, 10485760)")
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(testCmd)
 	rootCmd.AddCommand(uiCmd)
