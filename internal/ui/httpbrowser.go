@@ -653,9 +653,14 @@ func (hb HttpBrowser) updateTree(key tea.KeyMsg) (HttpBrowser, tea.Cmd) {
 	case "e":
 		if !hb.working {
 			if node, ok := hb.selectedRequestNode(); ok {
-				if hb.watchDone != nil {
-					close(hb.watchDone)
-					hb.watchDone = nil
+				// Only stop the watcher when launching a local subprocess editor.
+				// With IPC the edit goes to nvim; the watcher must stay alive so it
+				// detects the save and reloads automatically.
+				if hb.ipcServer == nil || !hb.ipcServer.Connected() {
+					if hb.watchDone != nil {
+						close(hb.watchDone)
+						hb.watchDone = nil
+					}
 				}
 				return hb, hb.cmdEditRequestBlock(node.reqPath, node.req.Name)
 			}
@@ -668,9 +673,11 @@ func (hb HttpBrowser) updateTree(key tea.KeyMsg) (HttpBrowser, tea.Cmd) {
 			if node, ok := hb.selectedVisibleNode(); ok && node.reqPath != "" {
 				filePath = node.reqPath
 			}
-			if hb.watchDone != nil {
-				close(hb.watchDone)
-				hb.watchDone = nil
+			if hb.ipcServer == nil || !hb.ipcServer.Connected() {
+				if hb.watchDone != nil {
+					close(hb.watchDone)
+					hb.watchDone = nil
+				}
 			}
 			return hb, hb.cmdEditWholeFile(filePath)
 		}
