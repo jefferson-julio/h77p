@@ -1,10 +1,12 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -34,14 +36,28 @@ func Execute(req *httpfile.Request, vars map[string]string) (*Result, error) {
 	}
 	body := interpolate(req.Body, vars)
 
-	// x-www-form-urlencoded bodies are often written one param per line for
-	// readability; collapse newlines into a single query string before sending.
-	if isFormURLEncoded(req.Headers, vars) {
-		body = collapseFormBody(body)
-	}
-
 	var bodyReader io.Reader
-	if body != "" {
+	var multipartContentType string
+
+	switch {
+	case isMultipartFormData(req.Headers, vars):
+		fileDir := "."
+		if req.FilePath != "" {
+			fileDir = filepath.Dir(req.FilePath)
+		}
+		data, ct, err := buildMultipartBody(body, fileDir)
+		if err != nil {
+			return nil, fmt.Errorf("multipart: %w", err)
+		}
+		bodyReader = bytes.NewReader(data)
+		multipartContentType = ct
+
+	case isFormURLEncoded(req.Headers, vars):
+		// x-www-form-urlencoded bodies are often written one param per line for
+		// readability; collapse newlines into a single query string before sending.
+		bodyReader = strings.NewReader(collapseFormBody(body))
+
+	case body != "":
 		bodyReader = strings.NewReader(body)
 	}
 
@@ -52,6 +68,11 @@ func Execute(req *httpfile.Request, vars map[string]string) (*Result, error) {
 
 	for _, h := range req.Headers {
 		httpReq.Header.Set(interpolate(h.Name, vars), interpolate(h.Value, vars))
+	}
+	// Override Content-Type with the generated multipart boundary value.
+	// This must happen after the headers loop so it takes precedence.
+	if multipartContentType != "" {
+		httpReq.Header.Set("Content-Type", multipartContentType)
 	}
 
 	start := time.Now()
@@ -82,6 +103,15 @@ func Execute(req *httpfile.Request, vars map[string]string) (*Result, error) {
 		Body:       string(respBody),
 		Duration:   duration,
 	}, nil
+}
+
+func isMultipartFormData(headers []httpfile.Header, vars map[string]string) bool {
+	for _, h := range headers {
+		if strings.EqualFold(h.Name, "content-type") {
+			return strings.Contains(strings.ToLower(interpolate(h.Value, vars)), "multipart/form-data")
+		}
+	}
+	return false
 }
 
 func isFormURLEncoded(headers []httpfile.Header, vars map[string]string) bool {

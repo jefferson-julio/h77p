@@ -27,12 +27,13 @@ type Variable struct {
 }
 
 type Request struct {
-	Name       string
-	Variables  []Variable
-	Method     string
-	URL        string
-	Headers    []Header
-	Body       string
+	Name      string
+	FilePath  string // absolute path of the .http file that defines this request
+	Variables []Variable
+	Method    string
+	URL       string
+	Headers   []Header
+	Body      string
 	PreScript  string
 	JQFilters  []string // @jq lines — applied to response body in order
 	PostScript string

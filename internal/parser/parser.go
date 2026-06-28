@@ -107,6 +107,7 @@ func (p *p) parse() (*httpfile.File, error) {
 		if err != nil {
 			return nil, err
 		}
+		req.FilePath = p.path
 		file.Requests = append(file.Requests, req)
 		file.Items = append(file.Items, httpfile.FileItem{IsGroup: false, Index: len(file.Requests) - 1})
 	}

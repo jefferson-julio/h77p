@@ -80,3 +80,18 @@ Accept: application/json
 ### Dates
 
 @import ./dates.sample.http
+
+### Multipart
+POST https://postman-echo.com/post
+Content-Type: multipart/form-data
+
+[boundary]
+Content-Disposition: form-data; name="file"; filename="demo.gif"
+Content-Type: image/gif
+
+< ../demo.gif
+[boundary--]
+
+@post-response {%
+  log(response);
+%}
