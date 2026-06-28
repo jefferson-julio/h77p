@@ -811,18 +811,87 @@ func (hb HttpBrowser) cmdIPCCursor() tea.Cmd {
 	})
 }
 
-// focusByName moves treeCursor to the first visible request with the given
-// name. No-op if the name is not found.
+// focusByName moves treeCursor to the first request with the given name,
+// expanding any collapsed groups along the path if necessary.
 func (hb HttpBrowser) focusByName(name string) HttpBrowser {
+	// Fast path: already visible.
 	for i, idx := range hb.visible {
 		node := hb.treeItems[idx]
 		if node.kind == nodeKindRequest && node.req.Name == name {
 			hb.treeCursor = i
-			hb = hb.withTreeScrollAdjusted()
-			return hb
+			return hb.withTreeScrollAdjusted()
+		}
+	}
+	// Slow path: request is inside a collapsed group — expand the path to it.
+	hb2, found := hb.expandGroupsToRequest(hb.file, name)
+	if !found {
+		return hb
+	}
+	hb2 = hb2.rebuildTree()
+	for i, idx := range hb2.visible {
+		node := hb2.treeItems[idx]
+		if node.kind == nodeKindRequest && node.req.Name == name {
+			hb2.treeCursor = i
+			return hb2.withTreeScrollAdjusted()
 		}
 	}
 	return hb
+}
+
+// expandGroupsToRequest walks the file tree to find a request by name.
+// For every group that contains the request (directly or transitively), it sets
+// expandedGroups[groupName] = true so the request becomes visible after a
+// rebuildTree call. Returns (updated hb, true) if found.
+func (hb HttpBrowser) expandGroupsToRequest(file *httpfile.File, name string) (HttpBrowser, bool) {
+	if file == nil {
+		return hb, false
+	}
+	for _, req := range file.Requests {
+		if req.Name == name {
+			return hb, true
+		}
+	}
+	for i := range file.Groups {
+		g := &file.Groups[i]
+		hb2, found := hb.expandGroupsToRequest(g.File, name)
+		if found {
+			hb2.expandedGroups[g.Name] = true
+			return hb2, true
+		}
+	}
+	return hb, false
+}
+
+// isFileInTree reports whether absPath appears anywhere in the import tree
+// rooted at root (the root file itself or any recursively imported group file).
+func isFileInTree(root *httpfile.File, absPath string) bool {
+	if root == nil {
+		return false
+	}
+	if root.Path == absPath {
+		return true
+	}
+	for i := range root.Groups {
+		if root.Groups[i].File != nil && isFileInTree(root.Groups[i].File, absPath) {
+			return true
+		}
+	}
+	return false
+}
+
+// needsFileSwitchCmd checks whether cmd.File is set and is NOT part of the
+// current tree. If so it returns a tea.Cmd that sends a switchFileMsg so
+// app.go can reload and re-dispatch. Returns nil when no switch is needed.
+func (hb HttpBrowser) needsFileSwitchCmd(cmd ipc.Command) tea.Cmd {
+	if cmd.File == "" {
+		return nil
+	}
+	abs, err := filepath.Abs(cmd.File)
+	if err != nil || isFileInTree(hb.file, abs) {
+		return nil
+	}
+	pending := cmd
+	return func() tea.Msg { return switchFileMsg{path: abs, pendingCmd: &pending} }
 }
 
 // handleIPCCommand dispatches a command received from the IPC client.
@@ -832,33 +901,23 @@ func (hb HttpBrowser) handleIPCCommand(cmd ipc.Command) (HttpBrowser, tea.Cmd) {
 		if cmd.Request == "" {
 			break
 		}
+		// If the target file is outside our tree, switch to it first.
+		if switchCmd := hb.needsFileSwitchCmd(cmd); switchCmd != nil {
+			return hb, switchCmd
+		}
 		var (
 			req  httpfile.Request
 			file *httpfile.File
 			ok   bool
 		)
 		if cmd.File != "" {
-			// Try to find the request in the specific file the editor is on.
-			// This handles the case where the user is editing a file that is not
-			// the root file the TUI was opened with (or not yet imported by it).
 			req, file, ok = findRequestByFilePath(hb.file, cmd.File, cmd.Request)
-			if !ok {
-				// File is not in the current tree — parse it independently.
-				parsed, err := parser.ParseFile(cmd.File)
-				if err != nil {
-					break
-				}
-				req, _, ok = findRequestInFile(parsed, cmd.Request)
-				if !ok {
-					break
-				}
-				file = parsed
-			}
-		} else {
+		}
+		if !ok {
 			req, file, ok = findRequestInFile(hb.file, cmd.Request)
-			if !ok {
-				break
-			}
+		}
+		if !ok {
+			break
 		}
 		hb.activeReq = req
 		hb.activeFile = file
@@ -879,6 +938,10 @@ func (hb HttpBrowser) handleIPCCommand(cmd ipc.Command) (HttpBrowser, tea.Cmd) {
 		return hb, runCmd
 
 	case "focus":
+		// If the target file is outside our tree, switch to it first.
+		if switchCmd := hb.needsFileSwitchCmd(cmd); switchCmd != nil {
+			return hb, switchCmd
+		}
 		if cmd.Request != "" {
 			hb = hb.focusByName(cmd.Request)
 			hb = hb.withSyncedPreview()
