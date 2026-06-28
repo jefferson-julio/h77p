@@ -23,7 +23,7 @@ func (e *Engine) RunPreRequest(src string, ctx *PreContext) error {
 	})
 	vm.Set("set", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) >= 2 {
-			ctx.Env[call.Arguments[0].String()] = call.Arguments[1].String()
+			ctx.Env[call.Arguments[0].String()] = jsValueToString(vm, call.Arguments[1])
 		}
 		return goja.Undefined()
 	})

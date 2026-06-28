@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jefferson-julio/h77p/internal/httpfile"
+	"github.com/jefferson-julio/h77p/internal/script"
 )
 
 // maxBodySize is the per-response body limit. Responses larger than this are
@@ -67,13 +68,27 @@ type Result struct {
 }
 
 func Execute(req *httpfile.Request, vars map[string]string) (*Result, error) {
-	url := interpolate(req.URL, vars)
+	// Lazily create the inline expression evaluator — only when a ${{ token is
+	// encountered for the first time, avoiding runtime allocation for plain requests.
+	var eval *script.InlineEvaluator
+	expand := func(s string) string {
+		s = interpolate(s, vars)
+		if !script.HasInlineExprs(s) {
+			return s
+		}
+		if eval == nil {
+			eval = script.NewInlineEvaluator(vars)
+		}
+		return eval.Eval(s)
+	}
+
+	url := expand(req.URL)
 	if strings.HasPrefix(url, "/") {
 		if host, ok := vars["host"]; ok && host != "" {
 			url = strings.TrimRight(host, "/") + url
 		}
 	}
-	body := interpolate(req.Body, vars)
+	body := expand(req.Body)
 
 	var bodyReader io.Reader
 	var multipartContentType string
@@ -106,7 +121,7 @@ func Execute(req *httpfile.Request, vars map[string]string) (*Result, error) {
 	}
 
 	for _, h := range req.Headers {
-		httpReq.Header.Set(interpolate(h.Name, vars), interpolate(h.Value, vars))
+		httpReq.Header.Set(expand(h.Name), expand(h.Value))
 	}
 	// Override Content-Type with the generated multipart boundary value.
 	// This must happen after the headers loop so it takes precedence.

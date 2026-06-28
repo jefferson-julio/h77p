@@ -1,6 +1,47 @@
 package script
 
-import "github.com/dop251/goja"
+import (
+	"strconv"
+
+	"github.com/dop251/goja"
+)
+
+// jsValueToString converts a goja value to a string suitable for storage in
+// env vars (set() calls and ${{expr}} tokens):
+//   - strings       → pass through unchanged
+//   - int64/float64 → decimal string, no scientific notation
+//   - bool          → "true" / "false"
+//   - objects with toISOString (date objects) → ISO 8601 string
+//   - everything else → val.String()
+func jsValueToString(vm *goja.Runtime, val goja.Value) string {
+	if goja.IsUndefined(val) || goja.IsNull(val) {
+		return ""
+	}
+	switch v := val.Export().(type) {
+	case string:
+		return v
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+	}
+	// Duck-type date objects: call toISOString() if present.
+	if obj, ok := val.(*goja.Object); ok {
+		if isoFn := obj.Get("toISOString"); isoFn != nil {
+			if fn, ok := goja.AssertFunction(isoFn); ok {
+				if result, err := fn(obj); err == nil {
+					return result.String()
+				}
+			}
+		}
+	}
+	return val.String()
+}
 
 // formatLogValue converts a goja value to a human-readable string.
 // Strings and primitives pass through directly. Objects and arrays are
@@ -85,7 +126,7 @@ func registerStdlib(vm *goja.Runtime, results *[]*TestResult, env map[string]str
 		if len(call.Arguments) < 2 {
 			return goja.Undefined()
 		}
-		env[call.Arguments[0].String()] = call.Arguments[1].String()
+		env[call.Arguments[0].String()] = jsValueToString(vm, call.Arguments[1])
 		return goja.Undefined()
 	})
 

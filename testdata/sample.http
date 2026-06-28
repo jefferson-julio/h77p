@@ -17,17 +17,17 @@ Accept: application/json
 %}
 
 @example {%
-HTTP/1.1 200 OK
-Content-Type: application/json; charset=utf-8
+  HTTP/1.1 200 OK
+  Content-Type: application/json; charset=utf-8
 
-[
-  {
-    "userId": 1,
-    "id": 1,
-    "title": "sunt aut facere repellat provident",
-    "body": "quia et suscipit..."
-  }
-]
+  [
+    {
+      "userId": 1,
+      "id": 1,
+      "title": "sunt aut facere repellat provident",
+      "body": "quia et suscipit..."
+    }
+  ]
 %}
 
 ### Group 1

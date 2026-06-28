@@ -2,13 +2,47 @@
 
 @pre-request {%
   set("name", fake.firstName())
-  set("birth", date.now().subtract(26, "y").subtract(6, "month").add(5, "d").toISOString());
+  set("birth", date.now().subtract(26, "y").subtract(6, "month").add(5, "d"));
 %}
 
-POST https://echo.free.beeceptor.com
+POST https://echo.free.beeceptor.com/?date=${{date.now().format("YYYY-MM-DD")}}
 Content-Type: application/json
 
 {
   "name": "{{name}}",
-  "birthdate": "{{birth}}"
+  "birthdate": "{{birth}}",
+  "url": "${{fake.url()}}",
+  "id": ${{fake.int(1, 100)}}
 }
+
+@example {%
+  HTTP/2.0 200 OK
+  Access-Control-Allow-Origin: *
+  Alt-Svc: h3=":443"; ma=2592000
+  Content-Type: application/json
+  Date: Sun, 28 Jun 2026 03:20:13 GMT
+  Vary: Accept-Encoding
+
+  {
+    "method": "POST",
+    "protocol": "https",
+    "host": "echo.free.beeceptor.com",
+    "path": "/?date=2026-06-28",
+    "headers": {
+      "Host": "echo.free.beeceptor.com",
+      "User-Agent": "Go-http-client/2.0",
+      "Content-Length": "143",
+      "Accept-Encoding": "gzip",
+      "Content-Type": "application/json"
+    },
+    "parsedQueryParams": {
+      "date": "2026-06-28"
+    },
+    "parsedBody": {
+      "name": "Grace",
+      "birthdate": "2000-01-02 00:20:13.462418743 -0200 -02",
+      "url": "http://www.centralinitiatives.name/mesh",
+      "id": 35
+    }
+  }
+%}
