@@ -2041,10 +2041,46 @@ func renderHTTPResult(result *runner.Result) string {
 		b.WriteString("\n")
 	} else if h.Body != "" {
 		b.WriteString("\n")
-		b.WriteString(highlightBodyFromHeaders(h.Body, h.Headers))
+		if isBinaryBody(h.Body, h.Headers) {
+			b.WriteString(styleDim.Render(fmt.Sprintf("[binary data %s]", executor.FormatBodySize(int64(len(h.Body))))))
+		} else {
+			b.WriteString(highlightBodyFromHeaders(h.Body, h.Headers))
+		}
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// isBinaryBody returns true when the body should not be rendered as text.
+// Content-Type is checked first; if absent or unrecognised, the first 512 bytes
+// are scanned for null bytes (same heuristic used by git and the file(1) command).
+func isBinaryBody(body string, headers map[string][]string) bool {
+	for k, vs := range headers {
+		if strings.EqualFold(k, "content-type") && len(vs) > 0 {
+			ct := strings.ToLower(vs[0])
+			for _, prefix := range []string{"image/", "audio/", "video/", "font/"} {
+				if strings.HasPrefix(ct, prefix) {
+					return true
+				}
+			}
+			for _, sub := range []string{"octet-stream", "pdf", "zip", "gzip", "x-tar", "wasm"} {
+				if strings.Contains(ct, sub) {
+					return true
+				}
+			}
+			// Explicit text type — trust it and skip the byte scan.
+			if strings.Contains(ct, "text/") || strings.Contains(ct, "json") ||
+				strings.Contains(ct, "xml") || strings.Contains(ct, "javascript") {
+				return false
+			}
+		}
+	}
+	// Fallback: null byte anywhere in the first 512 bytes → binary.
+	probe := body
+	if len(probe) > 512 {
+		probe = probe[:512]
+	}
+	return strings.Contains(probe, "\x00")
 }
 
 func renderTests(result *runner.Result) string {

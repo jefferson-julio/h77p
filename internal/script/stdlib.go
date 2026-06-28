@@ -1,7 +1,10 @@
 package script
 
 import (
+	"fmt"
 	"strconv"
+	"strings"
+	"unicode"
 
 	"github.com/dop251/goja"
 )
@@ -74,6 +77,30 @@ func formatLogValue(vm *goja.Runtime, v goja.Value) string {
 	return v.String()
 }
 
+// sanitizeLogValue replaces binary content with a human-readable notice so
+// raw bytes from response.body (or similar) never corrupt the terminal.
+// A string is considered binary when it contains null bytes OR when more than
+// 10% of its first 512 bytes are non-printable non-whitespace control chars.
+func sanitizeLogValue(s string) string {
+	probe := s
+	if len(probe) > 512 {
+		probe = probe[:512]
+	}
+	if strings.Contains(probe, "\x00") {
+		return fmt.Sprintf("[binary data %d bytes]", len(s))
+	}
+	var nonPrint int
+	for _, r := range probe {
+		if r != '\n' && r != '\r' && r != '\t' && unicode.IsControl(r) {
+			nonPrint++
+		}
+	}
+	if len(probe) > 0 && nonPrint*10 > len(probe) {
+		return fmt.Sprintf("[binary data %d bytes]", len(s))
+	}
+	return s
+}
+
 // registerUtilLibs registers the xml, fake, and date globals into a VM.
 // Called from both RunPreRequest and RunPostResponse so scripts at any stage
 // can generate fake data, manipulate dates, or parse XML responses.
@@ -135,7 +162,7 @@ func registerStdlib(vm *goja.Runtime, results *[]*TestResult, env map[string]str
 			*logs = append(*logs, "")
 			return goja.Undefined()
 		}
-		*logs = append(*logs, formatLogValue(vm, call.Arguments[0]))
+		*logs = append(*logs, sanitizeLogValue(formatLogValue(vm, call.Arguments[0])))
 		return goja.Undefined()
 	})
 
