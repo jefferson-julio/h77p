@@ -1917,7 +1917,11 @@ func renderSentRequest(result *runner.Result) string {
 	h := result.HTTP
 	var b strings.Builder
 
-	b.WriteString(colorMethodLine(h.Request.Method+" "+h.FinalURL) + "\n")
+	methodLine := h.Request.Method + " " + h.FinalURL
+	if h.Request.Version != "" {
+		methodLine += " " + h.Request.Version
+	}
+	b.WriteString(colorMethodLine(methodLine) + "\n")
 
 	keys := make([]string, 0, len(h.SentHeaders))
 	for k := range h.SentHeaders {

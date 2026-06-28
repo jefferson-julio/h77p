@@ -198,10 +198,11 @@ func (p *p) parseRequest(name string) (httpfile.Request, error) {
 		default:
 			// Only try to parse the method line once.
 			if req.Method == "" {
-				if method, url, ok := parseMethodLine(line); ok {
+				if method, url, version, ok := parseMethodLine(line); ok {
 					p.pos++
 					req.Method = method
 					req.URL = url
+					req.Version = version
 					headers, body, err := p.parseHeadersAndBody()
 					if err != nil {
 						return req, err
@@ -349,16 +350,25 @@ func parseVarDecl(line string) (httpfile.Variable, error) {
 	}, nil
 }
 
-func parseMethodLine(line string) (method, url string, ok bool) {
+func parseMethodLine(line string) (method, url, version string, ok bool) {
 	m, rest, found := strings.Cut(line, " ")
 	if !found {
-		return "", "", false
+		return "", "", "", false
 	}
 	m = strings.ToUpper(m)
 	if !httpMethods[m] {
-		return "", "", false
+		return "", "", "", false
 	}
-	return m, strings.TrimSpace(rest), true
+	rest = strings.TrimSpace(rest)
+	// Strip optional trailing HTTP version token (e.g. "HTTP/1.1", "HTTP/2", "HTTP/3").
+	if i := strings.LastIndex(rest, " "); i >= 0 {
+		last := strings.ToUpper(strings.TrimSpace(rest[i+1:]))
+		if last == "HTTP/1.0" || last == "HTTP/1.1" || last == "HTTP/2" || last == "HTTP/3" {
+			version = last
+			rest = strings.TrimSpace(rest[:i])
+		}
+	}
+	return m, rest, version, true
 }
 
 func trimTrailingBlank(lines []string) string {

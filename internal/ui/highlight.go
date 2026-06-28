@@ -459,11 +459,25 @@ func isHeaderLine(line string) bool {
 
 func colorMethodLine(raw string) string {
 	method, rest, _ := strings.Cut(strings.TrimSpace(raw), " ")
+	rest = strings.TrimSpace(rest)
 	ms, ok := styleMethod[strings.ToUpper(method)]
 	if !ok {
 		ms = lipgloss.NewStyle()
 	}
-	return ms.Bold(true).Render(method) + " " + colorizeTokens(strings.TrimSpace(rest), clrURL)
+	// Strip trailing HTTP version token for separate coloring.
+	var version string
+	if i := strings.LastIndex(rest, " "); i >= 0 {
+		last := strings.ToUpper(strings.TrimSpace(rest[i+1:]))
+		if last == "HTTP/1.0" || last == "HTTP/1.1" || last == "HTTP/2" || last == "HTTP/3" {
+			version = last
+			rest = strings.TrimSpace(rest[:i])
+		}
+	}
+	out := ms.Bold(true).Render(method) + " " + colorizeTokens(rest, clrURL)
+	if version != "" {
+		out += " " + clrKeyword.Render(version)
+	}
+	return out
 }
 
 func colorHeader(raw string) string {

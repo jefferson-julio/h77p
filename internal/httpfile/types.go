@@ -32,6 +32,7 @@ type Request struct {
 	Variables []Variable
 	Method    string
 	URL       string
+	Version   string // optional HTTP version override, e.g. "HTTP/1.1", "HTTP/2", "HTTP/3"
 	Headers   []Header
 	Body      string
 	PreScript  string

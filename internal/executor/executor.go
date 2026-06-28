@@ -3,6 +3,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -54,6 +55,34 @@ func ParseBodySize(s string) (int64, error) {
 }
 
 var varRe = regexp.MustCompile(`\{\{([^}]+)\}\}`)
+
+// clientForVersion returns an HTTP client configured for the requested protocol
+// version. An empty version uses http.DefaultClient (Go's default behaviour:
+// HTTP/1.1 for plain requests, HTTP/2 via ALPN for TLS).
+func clientForVersion(version string) (*http.Client, error) {
+	switch version {
+	case "", "HTTP/1.0", "HTTP/1.1":
+		if version == "" {
+			return http.DefaultClient, nil
+		}
+		// Force HTTP/1.x by disabling HTTP/2 ALPN negotiation.
+		return &http.Client{
+			Transport: &http.Transport{
+				TLSNextProto: make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
+			},
+		}, nil
+	case "HTTP/2":
+		return &http.Client{
+			Transport: &http.Transport{
+				ForceAttemptHTTP2: true,
+			},
+		}, nil
+	case "HTTP/3":
+		return nil, fmt.Errorf("HTTP/3 is not supported")
+	default:
+		return http.DefaultClient, nil
+	}
+}
 
 type Result struct {
 	Request    *httpfile.Request
@@ -149,8 +178,12 @@ func Execute(req *httpfile.Request, vars map[string]string) (*Result, error) {
 		sentBody = body
 	}
 
+	client, err := clientForVersion(req.Version)
+	if err != nil {
+		return nil, fmt.Errorf("execute %s %s: %w", req.Method, url, err)
+	}
 	start := time.Now()
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("execute %s %s: %w", req.Method, url, err)
 	}
