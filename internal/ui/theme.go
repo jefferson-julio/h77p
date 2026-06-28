@@ -21,11 +21,12 @@ type Theme struct {
 	Dir    lipgloss.Color // directory entry label
 
 	// .http tokeniser colours
-	SynSection   lipgloss.Color // ### separator lines
-	SynKeyword   lipgloss.Color // @tags (@pre-request, @example …)
-	SynHeaderKey lipgloss.Color // HTTP header name
-	SynHeaderVal lipgloss.Color // HTTP header value / URL text
-	SynVar       lipgloss.Color // {{variable}} interpolations
+	SynSection    lipgloss.Color // ### separator lines
+	SynKeyword    lipgloss.Color // @tags (@pre-request, @example …)
+	SynHeaderKey  lipgloss.Color // HTTP header name
+	SynHeaderVal  lipgloss.Color // HTTP header value / URL text
+	SynVar        lipgloss.Color // {{variable}} interpolations
+	SynInlineExpr lipgloss.Color // ${{js expression}} tokens
 
 	// HTTP method colours
 	MethodGET    lipgloss.Color
@@ -56,11 +57,12 @@ var ThemeMonokai = Theme{
 	Accent:   "#f92672",
 	Dir:      "#66d9ef",
 
-	SynSection:   "#e6db74",
-	SynKeyword:   "#ae81ff",
-	SynHeaderKey: "#66d9ef",
-	SynHeaderVal: "#f8f8f2",
-	SynVar:       "#fd971f",
+	SynSection:    "#e6db74",
+	SynKeyword:    "#ae81ff",
+	SynHeaderKey:  "#66d9ef",
+	SynHeaderVal:  "#f8f8f2",
+	SynVar:        "#fd971f",
+	SynInlineExpr: "#f92672",
 
 	MethodGET:    "#a6e874",
 	MethodPOST:   "#fd971f",
@@ -86,11 +88,12 @@ var ThemeNord = Theme{
 	Accent:   "#88c0d0",
 	Dir:      "#81a1c1",
 
-	SynSection:   "#ebcb8b",
-	SynKeyword:   "#b48ead",
-	SynHeaderKey: "#88c0d0",
-	SynHeaderVal: "#eceff4",
-	SynVar:       "#d08770",
+	SynSection:    "#ebcb8b",
+	SynKeyword:    "#b48ead",
+	SynHeaderKey:  "#88c0d0",
+	SynHeaderVal:  "#eceff4",
+	SynVar:        "#d08770",
+	SynInlineExpr: "#a3be8c",
 
 	MethodGET:    "#a3be8c",
 	MethodPOST:   "#d08770",
@@ -116,11 +119,12 @@ var ThemeCatppuccin = Theme{
 	Accent:   "#cba6f7",
 	Dir:      "#89b4fa",
 
-	SynSection:   "#f9e2af",
-	SynKeyword:   "#cba6f7",
-	SynHeaderKey: "#89dceb",
-	SynHeaderVal: "#cdd6f4",
-	SynVar:       "#fab387",
+	SynSection:    "#f9e2af",
+	SynKeyword:    "#cba6f7",
+	SynHeaderKey:  "#89dceb",
+	SynHeaderVal:  "#cdd6f4",
+	SynVar:        "#fab387",
+	SynInlineExpr: "#89b4fa",
 
 	MethodGET:    "#a6e3a1",
 	MethodPOST:   "#fab387",

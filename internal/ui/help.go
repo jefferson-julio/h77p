@@ -58,7 +58,8 @@ var (
 
 	helpFileView = []helpSection{
 		{title: "Tabs", binds: [][2]string{
-			{"1 – 5", "switch tab"},
+			{"1 – 7", "switch tab (definition/request/response/status/tests/logs/example)"},
+			{"[ / ]", "previous / next tab"},
 			{"tab", "toggle list / env focus"},
 		}},
 		{title: "Navigation", binds: [][2]string{
@@ -87,7 +88,8 @@ var (
 
 	helpPartsView = []helpSection{
 		{title: "Tabs", binds: [][2]string{
-			{"1 – 5", "switch tab"},
+			{"1 – 7", "switch tab (definition/request/response/status/tests/logs/example)"},
+			{"[ / ]", "previous / next tab"},
 			{"tab", "toggle parts / env focus"},
 		}},
 		{title: "Navigation", binds: [][2]string{

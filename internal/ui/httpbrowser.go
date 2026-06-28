@@ -26,11 +26,13 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	tabRequest = iota
-	tabRun
-	tabTests
-	tabLogs
-	tabExample
+	tabDefinition = iota // 1 — full .http source (was tabRequest)
+	tabRequest           // 2 — outgoing HTTP request with resolved values (new)
+	tabResponse          // 3 — HTTP response headers + body (was tabRun)
+	tabStatus            // 4 — timing & request stats (new)
+	tabTests             // 5
+	tabLogs              // 6
+	tabExample           // 7
 )
 
 const (
@@ -520,19 +522,31 @@ func (hb HttpBrowser) updateTree(key tea.KeyMsg) (HttpBrowser, tea.Cmd) {
 		hb.search.pos = len([]rune(hb.search.query))
 
 	case "1":
-		hb.activeTab = tabRequest
+		hb.activeTab = tabDefinition
 		hb = hb.withSyncedPreview()
 	case "2":
-		hb.activeTab = tabRun
+		hb.activeTab = tabRequest
 		hb = hb.withSyncedPreview()
 	case "3":
-		hb.activeTab = tabTests
+		hb.activeTab = tabResponse
 		hb = hb.withSyncedPreview()
 	case "4":
-		hb.activeTab = tabLogs
+		hb.activeTab = tabStatus
 		hb = hb.withSyncedPreview()
 	case "5":
+		hb.activeTab = tabTests
+		hb = hb.withSyncedPreview()
+	case "6":
+		hb.activeTab = tabLogs
+		hb = hb.withSyncedPreview()
+	case "7":
 		hb.activeTab = tabExample
+		hb = hb.withSyncedPreview()
+	case "]":
+		hb.activeTab = (hb.activeTab + 1) % (tabExample + 1)
+		hb = hb.withSyncedPreview()
+	case "[":
+		hb.activeTab = (hb.activeTab + tabExample) % (tabExample + 1)
 		hb = hb.withSyncedPreview()
 
 	case "tab":
@@ -698,19 +712,31 @@ func (hb HttpBrowser) updateParts(key tea.KeyMsg) (HttpBrowser, tea.Cmd) {
 		hb.helpOpen = true
 
 	case "1":
-		hb.activeTab = tabRequest
+		hb.activeTab = tabDefinition
 		hb = hb.withSyncedPreview()
 	case "2":
-		hb.activeTab = tabRun
+		hb.activeTab = tabRequest
 		hb = hb.withSyncedPreview()
 	case "3":
-		hb.activeTab = tabTests
+		hb.activeTab = tabResponse
 		hb = hb.withSyncedPreview()
 	case "4":
-		hb.activeTab = tabLogs
+		hb.activeTab = tabStatus
 		hb = hb.withSyncedPreview()
 	case "5":
+		hb.activeTab = tabTests
+		hb = hb.withSyncedPreview()
+	case "6":
+		hb.activeTab = tabLogs
+		hb = hb.withSyncedPreview()
+	case "7":
 		hb.activeTab = tabExample
+		hb = hb.withSyncedPreview()
+	case "]":
+		hb.activeTab = (hb.activeTab + 1) % (tabExample + 1)
+		hb = hb.withSyncedPreview()
+	case "[":
+		hb.activeTab = (hb.activeTab + tabExample) % (tabExample + 1)
 		hb = hb.withSyncedPreview()
 
 	case "tab":
@@ -1215,7 +1241,7 @@ func (hb HttpBrowser) handleRequestDone(msg requestDoneMsg) (HttpBrowser, tea.Cm
 	}
 
 	hb.lastResult = msg.result
-	hb.activeTab = tabRun
+	hb.activeTab = tabResponse
 
 	if msg.result != nil && msg.result.HTTP != nil {
 		h := msg.result.HTTP
@@ -1340,7 +1366,7 @@ func (hb HttpBrowser) handleEditDone(msg partsEditDoneMsg) (HttpBrowser, tea.Cmd
 	hb = hb.rebuildTree()
 	hb = hb.refreshActiveReq()
 	hb.status = "saved"
-	hb.activeTab = tabRequest
+	hb.activeTab = tabDefinition
 	hb = hb.withSyncedPreview()
 	return hb, nil
 }
@@ -1585,15 +1611,19 @@ func (hb HttpBrowser) statusLine() string {
 func (hb HttpBrowser) withSyncedPreview() HttpBrowser {
 	if hb.depth == depthParts {
 		switch hb.activeTab {
-		case tabRun:
+		case tabRequest:
+			hb.preview.SetContent(renderSentRequest(hb.lastResult))
+		case tabResponse:
 			hb.preview.SetContent(renderHTTPResult(hb.lastResult))
+		case tabStatus:
+			hb.preview.SetContent(renderRequestStatus(hb.lastResult))
 		case tabTests:
 			hb.preview.SetContent(renderTests(hb.lastResult))
 		case tabLogs:
 			hb.preview.SetContent(renderLogs(hb.lastResult))
 		case tabExample:
 			hb.preview.SetContent(renderExample(hb.activeReq))
-		default:
+		default: // tabDefinition
 			hb.preview.SetContent(hb.partsPreviewContent())
 		}
 		hb.preview.GotoTop()
@@ -1602,8 +1632,12 @@ func (hb HttpBrowser) withSyncedPreview() HttpBrowser {
 
 	// Tree mode
 	switch hb.activeTab {
-	case tabRun:
+	case tabRequest:
+		hb.preview.SetContent(renderSentRequest(hb.lastResult))
+	case tabResponse:
 		hb.preview.SetContent(renderHTTPResult(hb.lastResult))
+	case tabStatus:
+		hb.preview.SetContent(renderRequestStatus(hb.lastResult))
 	case tabTests:
 		hb.preview.SetContent(renderTests(hb.lastResult))
 	case tabLogs:
@@ -1614,7 +1648,7 @@ func (hb HttpBrowser) withSyncedPreview() HttpBrowser {
 		} else {
 			hb.preview.SetContent(styleDim.Render("(no request selected)"))
 		}
-	default: // tabRequest
+	default: // tabDefinition
 		node, ok := hb.selectedVisibleNode()
 		if !ok {
 			msg := "(no requests)"
@@ -1848,6 +1882,127 @@ func renderExample(req httpfile.Request) string {
 	}
 	b.WriteString("%}")
 	return highlightHTTP(b.String())
+}
+
+func formatDuration(d time.Duration) string {
+	ms := d.Milliseconds()
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	if ms < 60000 {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
+}
+
+// renderSentRequest shows the outgoing HTTP request as it was actually sent:
+// method + resolved URL, resolved headers, resolved body (omitted for multipart).
+func renderSentRequest(result *runner.Result) string {
+	if result == nil {
+		return styleDim.Render("(no run yet — press r to run)")
+	}
+	if result.HTTP == nil {
+		if result.Err != nil {
+			return lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("error: " + result.Err.Error())
+		}
+		return styleDim.Render("(no request sent)")
+	}
+	h := result.HTTP
+	var b strings.Builder
+
+	b.WriteString(colorMethodLine(h.Request.Method+" "+h.FinalURL) + "\n")
+
+	keys := make([]string, 0, len(h.SentHeaders))
+	for k := range h.SentHeaders {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		b.WriteString(colorHeader(k+": "+h.SentHeaders[k]) + "\n")
+	}
+
+	if h.SentBodyOmitted {
+		b.WriteString("\n" + styleDim.Render("(multipart/form-data, body not shown)") + "\n")
+	} else if h.SentBody != "" {
+		b.WriteString("\n")
+		sentHeadersMulti := make(map[string][]string, len(h.SentHeaders))
+		for k, v := range h.SentHeaders {
+			sentHeadersMulti[k] = []string{v}
+		}
+		b.WriteString(highlightBodyFromHeaders(h.SentBody, sentHeadersMulti))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// renderRequestStatus shows timing and metadata for the last HTTP exchange.
+func renderRequestStatus(result *runner.Result) string {
+	if result == nil {
+		return styleDim.Render("(no run yet — press r to run)")
+	}
+	if result.HTTP == nil {
+		if result.Err != nil {
+			return lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("error: " + result.Err.Error())
+		}
+		return styleDim.Render("(no request sent)")
+	}
+	h := result.HTTP
+	req := h.Request
+
+	col := func(k, v string) string {
+		return fmt.Sprintf("  %-14s %s\n", k, v)
+	}
+
+	var b strings.Builder
+
+	b.WriteString(styleDim.Render("Request") + "\n")
+	ms, ok := styleMethod[req.Method]
+	if !ok {
+		ms = lipgloss.NewStyle()
+	}
+	b.WriteString(col("Method", ms.Render(req.Method)))
+	b.WriteString(col("URL", clrURL.Render(h.FinalURL)))
+
+	b.WriteString("\n")
+	b.WriteString(styleDim.Render("Response") + "\n")
+	b.WriteString(col("Status", colorStatusLine(h.Status)))
+	b.WriteString(col("Protocol", h.Proto))
+	b.WriteString(col("Duration", formatDuration(h.Duration)))
+
+	if h.BodyPath != "" {
+		b.WriteString(col("Body", styleDim.Render("stored to disk (exceeded limit)")))
+	} else if h.Body != "" {
+		b.WriteString(col("Body size", executor.FormatBodySize(int64(len(h.Body)))))
+	} else {
+		b.WriteString(col("Body", styleDim.Render("(empty)")))
+	}
+
+	if ct := h.Headers["Content-Type"]; len(ct) > 0 {
+		b.WriteString(col("Content-Type", ct[0]))
+	}
+
+	if len(result.Tests) > 0 {
+		b.WriteString("\n")
+		b.WriteString(styleDim.Render("Tests") + "\n")
+		passed, failed := 0, 0
+		for _, t := range result.Tests {
+			if t.Passed {
+				passed++
+			} else {
+				failed++
+			}
+		}
+		summary := fmt.Sprintf("%d/%d passed", passed, passed+failed)
+		var clr lipgloss.Style
+		if failed > 0 {
+			clr = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+		} else {
+			clr = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+		}
+		b.WriteString(col("", clr.Render(summary)))
+	}
+
+	return b.String()
 }
 
 func renderHTTPResult(result *runner.Result) string {

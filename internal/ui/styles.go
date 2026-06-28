@@ -143,9 +143,9 @@ func narrowTopHeight(contentH int) int {
 	return h
 }
 
-// renderTabBar draws the five right-panel tabs and returns a line of width w.
+// renderTabBar draws the seven right-panel tabs and returns a line of width w.
 func renderTabBar(activeTab, w int) string {
-	labels := []string{"1 request", "2 run", "3 tests", "4 logs", "5 example"}
+	labels := []string{"1 definition", "2 request", "3 response", "4 status", "5 tests", "6 logs", "7 example"}
 	var parts []string
 	for i, label := range labels {
 		if i == activeTab {

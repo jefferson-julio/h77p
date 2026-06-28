@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 
 	"github.com/alecthomas/chroma/v2/formatters"
@@ -12,19 +13,23 @@ import (
 
 // Token colours for the .http file format. Populated by initHighlightStyles().
 var (
-	clrSection   lipgloss.Style
-	clrKeyword   lipgloss.Style
-	clrDelim     lipgloss.Style
-	clrHeaderKey lipgloss.Style
-	clrHeaderSep lipgloss.Style
-	clrHeaderVal lipgloss.Style
-	clrURL       lipgloss.Style
-	clrVar       lipgloss.Style
-	clrStatus2xx lipgloss.Style
-	clrStatus3xx lipgloss.Style
-	clrStatus4xx lipgloss.Style
-	clrStatus5xx lipgloss.Style
+	clrSection    lipgloss.Style
+	clrKeyword    lipgloss.Style
+	clrDelim      lipgloss.Style
+	clrHeaderKey  lipgloss.Style
+	clrHeaderSep  lipgloss.Style
+	clrHeaderVal  lipgloss.Style
+	clrURL        lipgloss.Style
+	clrVar        lipgloss.Style
+	clrInlineExpr lipgloss.Style // ${{js expression}} tokens
+	clrStatus2xx  lipgloss.Style
+	clrStatus3xx  lipgloss.Style
+	clrStatus4xx  lipgloss.Style
+	clrStatus5xx  lipgloss.Style
 )
+
+// inlineExprBodyRe matches ${{expr}} tokens in body text (including chroma output).
+var inlineExprBodyRe = regexp.MustCompile(`\$\{\{[^}]+\}\}`)
 
 // Chroma lexers/style/formatter shared across JS, JSON, and XML highlighting.
 // jsStyle is set by initHighlightStyles() from the active theme.
@@ -38,18 +43,19 @@ var (
 
 func initHighlightStyles() {
 	t := activeTheme
-	clrSection   = lipgloss.NewStyle().Bold(true).Foreground(t.SynSection)
-	clrKeyword   = lipgloss.NewStyle().Foreground(t.SynKeyword)
-	clrDelim     = lipgloss.NewStyle().Foreground(t.FgFaint)
-	clrHeaderKey = lipgloss.NewStyle().Foreground(t.SynHeaderKey)
-	clrHeaderSep = lipgloss.NewStyle().Foreground(t.FgFaint)
-	clrHeaderVal = lipgloss.NewStyle().Foreground(t.SynHeaderVal)
-	clrURL       = lipgloss.NewStyle().Foreground(t.SynHeaderVal)
-	clrVar       = lipgloss.NewStyle().Bold(true).Foreground(t.SynVar)
-	clrStatus2xx = lipgloss.NewStyle().Foreground(t.Status2xx)
-	clrStatus3xx = lipgloss.NewStyle().Foreground(t.Status3xx)
-	clrStatus4xx = lipgloss.NewStyle().Foreground(t.Status4xx)
-	clrStatus5xx = lipgloss.NewStyle().Foreground(t.Status5xx)
+	clrSection    = lipgloss.NewStyle().Bold(true).Foreground(t.SynSection)
+	clrKeyword    = lipgloss.NewStyle().Foreground(t.SynKeyword)
+	clrDelim      = lipgloss.NewStyle().Foreground(t.FgFaint)
+	clrHeaderKey  = lipgloss.NewStyle().Foreground(t.SynHeaderKey)
+	clrHeaderSep  = lipgloss.NewStyle().Foreground(t.FgFaint)
+	clrHeaderVal  = lipgloss.NewStyle().Foreground(t.SynHeaderVal)
+	clrURL        = lipgloss.NewStyle().Foreground(t.SynHeaderVal)
+	clrVar        = lipgloss.NewStyle().Bold(true).Foreground(t.SynVar)
+	clrInlineExpr = lipgloss.NewStyle().Bold(true).Foreground(t.SynInlineExpr)
+	clrStatus2xx  = lipgloss.NewStyle().Foreground(t.Status2xx)
+	clrStatus3xx  = lipgloss.NewStyle().Foreground(t.Status3xx)
+	clrStatus4xx  = lipgloss.NewStyle().Foreground(t.Status4xx)
+	clrStatus5xx  = lipgloss.NewStyle().Foreground(t.Status5xx)
 
 	if s := styles.Get(t.ChromaStyle); s != nil {
 		jsStyle = s
@@ -133,6 +139,9 @@ func highlightHTTP(src string) string {
 			default:
 				highlighted = body
 			}
+			// Re-apply inline expression highlighting after chroma — chroma doesn't
+			// know about ${{expr}} so these tokens appear verbatim in its output.
+			highlighted = colorizeInlineExprs(highlighted)
 			out = append(out, strings.Split(highlighted, "\n")...)
 		}
 		out = append(out, trailing...)
@@ -485,7 +494,8 @@ func colorStatusLine(raw string) string {
 	return clr.Render(trimmed)
 }
 
-// colorizeTokens wraps s in base style, but highlights {{var}} spans with clrVar.
+// colorizeTokens wraps s in base style, highlights {{var}} spans with clrVar,
+// and highlights ${{expr}} spans (inline JS) with clrInlineExpr.
 func colorizeTokens(s string, base lipgloss.Style) string {
 	if !strings.Contains(s, "{{") {
 		return base.Render(s)
@@ -497,17 +507,44 @@ func colorizeTokens(s string, base lipgloss.Style) string {
 			b.WriteString(base.Render(s))
 			break
 		}
-		if start > 0 {
-			b.WriteString(base.Render(s[:start]))
-		}
 		end := strings.Index(s[start:], "}}")
 		if end == -1 {
-			b.WriteString(clrVar.Render(s[start:]))
+			// Unclosed token — render the rest as base text.
+			b.WriteString(base.Render(s))
 			break
 		}
 		end += start + 2
-		b.WriteString(clrVar.Render(s[start:end]))
+
+		// ${{expr}} — include the '$' prefix in the inline-expr span.
+		isInline := start > 0 && s[start-1] == '$'
+		tokenStart := start
+		if isInline {
+			tokenStart = start - 1
+		}
+
+		if tokenStart > 0 {
+			b.WriteString(base.Render(s[:tokenStart]))
+		}
+		if isInline {
+			b.WriteString(clrInlineExpr.Render(s[tokenStart:end]))
+		} else {
+			b.WriteString(clrVar.Render(s[start:end]))
+		}
 		s = s[end:]
 	}
 	return b.String()
+}
+
+// colorizeInlineExprs re-highlights ${{expr}} tokens inside an already-styled
+// string (e.g. chroma output). Chroma tokenises JSON/XML bodies as whole string
+// values, so the ${{...}} sequence appears verbatim within the ANSI span and can
+// be replaced. The surrounding chroma color may break after the token, which is
+// an acceptable trade-off for clear expression highlighting.
+func colorizeInlineExprs(s string) string {
+	if !strings.Contains(s, "${{") {
+		return s
+	}
+	return inlineExprBodyRe.ReplaceAllStringFunc(s, func(match string) string {
+		return clrInlineExpr.Render(match)
+	})
 }

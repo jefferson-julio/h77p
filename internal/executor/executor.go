@@ -65,6 +65,11 @@ type Result struct {
 	Body       string
 	BodyPath   string // non-empty when body exceeded maxBodySize and was spilled to disk
 	Duration   time.Duration
+
+	// Outgoing request details (post variable/expression expansion) for display.
+	SentHeaders     map[string]string // resolved header values (one string per header)
+	SentBody        string            // resolved body; empty for multipart or empty bodies
+	SentBodyOmitted bool              // true when body was multipart (binary, not shown)
 }
 
 func Execute(req *httpfile.Request, vars map[string]string) (*Result, error) {
@@ -129,6 +134,21 @@ func Execute(req *httpfile.Request, vars map[string]string) (*Result, error) {
 		httpReq.Header.Set("Content-Type", multipartContentType)
 	}
 
+	// Capture the outgoing request details (after full expansion) for display.
+	sentHeaders := make(map[string]string, len(httpReq.Header))
+	for k, vs := range httpReq.Header {
+		sentHeaders[k] = strings.Join(vs, ", ")
+	}
+	var sentBody string
+	var sentBodyOmitted bool
+	if multipartContentType != "" {
+		sentBodyOmitted = true
+	} else if isFormURLEncoded(req.Headers, vars) {
+		sentBody = collapseFormBody(body)
+	} else {
+		sentBody = body
+	}
+
 	start := time.Now()
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
@@ -148,15 +168,18 @@ func Execute(req *httpfile.Request, vars map[string]string) (*Result, error) {
 	}
 
 	return &Result{
-		Request:    req,
-		FinalURL:   url,
-		Proto:      resp.Proto,
-		StatusCode: resp.StatusCode,
-		Status:     resp.Status,
-		Headers:    headers,
-		Body:       body,
-		BodyPath:   bodyPath,
-		Duration:   duration,
+		Request:         req,
+		FinalURL:        url,
+		Proto:           resp.Proto,
+		StatusCode:      resp.StatusCode,
+		Status:          resp.Status,
+		Headers:         headers,
+		Body:            body,
+		BodyPath:        bodyPath,
+		Duration:        duration,
+		SentHeaders:     sentHeaders,
+		SentBody:        sentBody,
+		SentBodyOmitted: sentBodyOmitted,
 	}, nil
 }
 
@@ -197,11 +220,11 @@ func readBodyWithLimit(r io.Reader, limit int64) (body, path string, err error) 
 	}
 	total += n
 
-	notice := fmt.Sprintf("[body too large (%s), stored at %s]", formatBodySize(total), f.Name())
+	notice := fmt.Sprintf("[body too large (%s), stored at %s]", FormatBodySize(total), f.Name())
 	return notice, f.Name(), nil
 }
 
-func formatBodySize(n int64) string {
+func FormatBodySize(n int64) string {
 	switch {
 	case n >= 1<<30:
 		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
