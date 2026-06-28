@@ -84,7 +84,7 @@ func registerUtilLibs(vm *goja.Runtime) {
 	registerJWT(vm)
 }
 
-func registerStdlib(vm *goja.Runtime, results *[]*TestResult, env map[string]string, logs *[]string) {
+func registerStdlib(vm *goja.Runtime, results *[]*TestResult, env map[string]string, logs *[]string, onSuccessCallbacks *[]goja.Callable) {
 	vm.Set("test", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 2 {
 			return goja.Undefined()
@@ -136,6 +136,20 @@ func registerStdlib(vm *goja.Runtime, results *[]*TestResult, env map[string]str
 			return goja.Undefined()
 		}
 		*logs = append(*logs, formatLogValue(vm, call.Arguments[0]))
+		return goja.Undefined()
+	})
+
+	// onSuccess(fn) — queues fn to be called after the script finishes, but only
+	// if every test() in this block passed (or there are no tests at all).
+	vm.Set("onSuccess", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Undefined()
+		}
+		fn, ok := goja.AssertFunction(call.Arguments[0])
+		if !ok {
+			return goja.Undefined()
+		}
+		*onSuccessCallbacks = append(*onSuccessCallbacks, fn)
 		return goja.Undefined()
 	})
 

@@ -38,9 +38,26 @@ func (e *Engine) RunPreRequest(src string, ctx *PreContext) error {
 func (e *Engine) RunPostResponse(src string, ctx *PostContext) ([]*TestResult, error) {
 	vm := goja.New()
 	var results []*TestResult
-	registerStdlib(vm, &results, ctx.Env, &ctx.Logs)
+	var onSuccessCallbacks []goja.Callable
+	registerStdlib(vm, &results, ctx.Env, &ctx.Logs, &onSuccessCallbacks)
 	setPostContext(vm, ctx)
 	_, err := vm.RunString(src)
+	if err == nil && len(onSuccessCallbacks) > 0 {
+		allPassed := true
+		for _, r := range results {
+			if !r.Passed {
+				allPassed = false
+				break
+			}
+		}
+		if allPassed {
+			for _, fn := range onSuccessCallbacks {
+				if _, cbErr := fn(goja.Undefined()); cbErr != nil {
+					ctx.Logs = append(ctx.Logs, "onSuccess: "+cbErr.Error())
+				}
+			}
+		}
+	}
 	return results, err
 }
 
