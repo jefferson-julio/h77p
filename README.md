@@ -6,7 +6,7 @@ A terminal HTTP client driven by `.http` files. Browse and run requests from a k
 
 ## Installation
 
-**Prerequisites:** Go 1.22+. Optionally, `jq` in your PATH for response filtering.
+**Prerequisites:** Go 1.22+. Optionally, `jq` in your PATH for response filtering and [otree](https://github.com/fioncat/otree) for JSON/XML inspection on the TUI.
 
 ```sh
 go install github.com/jefferson-julio/h77p@latest
