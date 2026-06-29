@@ -32,231 +32,191 @@ h77p test <file>          # run all requests that have test blocks
 
 - **TUI browser**: navigate directories, pick `.http` files, inspect requests, and run them
 - **Request runner**: executes HTTP requests with variable interpolation across URL, headers, and body
-- **JavaScript scripting**: pre-request and post-response hooks
+- **Inline JS expressions**: use `${{expr}}` anywhere in the URL, headers, or body
+- **JavaScript scripting**: pre-request and post-response hooks with a rich stdlib
 - **Test assertions**: write inline tests with `test()` / `assert()` and see pass/fail results
 - **`jq` filters**: transform JSON response bodies through one or more chained `@jq` directives
-- **`.env` file support**: variables loaded from `.env` files searched upward from the `.http` file's directory
-- **Example responses**: save an offline `@example` block per request; shown in the TUI when no live run exists
+- **Example responses**: save an offline `@example` block per request
 - **File watching**: the TUI reloads automatically when the `.http` file changes on disk
 - **External editor**: open the whole file or a single request block in `$EDITOR`
-- **External body viewer**: open the response body in [otree](https://github.com/fioncat/otree), fallback to [jless](https://github.com/PaulJuliusMartinez/jless), then `less`.
+- **External body viewer**: open the response body in [otree](https://github.com/fioncat/otree), fallback to [jless](https://github.com/PaulJuliusMartinez/jless), then `less`
 
-## .http File Format
+## File Format
 
-A `.http` file contains one or more requests separated by `### Request Name` lines.
-
-```txt
-# File-level comment
-
-@baseUrl = https://api.example.com    # file-level variable
-
-### Get Users
-GET {{baseUrl}}/users
-Accept: application/json
-# Comments are allowed in the headers section too
-
-### Create User
-@pre-request {%
-  request.headers["X-Request-Id"] = "req-" + Date.now();
-%}
-
-POST {{baseUrl}}/users
-Content-Type: application/json
-
-{
-  "name": "Alice",
-  "role": "admin"
-}
-
-@jq .id                             # extract a field from the JSON response
-@jq select(. != null)               # chain filters
-
-@post-response {%
-  test("status 201", () => {
-    assert(response.status === 201);
-  });
-
-  set("userId", String(response.json().id));
-  log("created user:", response.jq);
-%}
-
-@example {%
-  HTTP/1.1 201 Created
-  Content-Type: application/json
-
-  {"id": 42, "name": "Alice"}
-%}
-
-### Post Group
-@import ./posts.http
-
-### Status
-GET {{baseUrl}}/status
-Accept: application/json
-
-### Photos Group
-@import ./photos.http
-```
-
-### Variables
-
-Declare variables at file level with `@name = value`. Reference them anywhere in the request with `{{name}}`. Variables set by `set()` in a post-response script are available to all subsequent requests in the session.
-
-```txt
-@baseUrl = https://api.example.com
-@token   = secret
-
-GET {{baseUrl}}/profile
-Authorization: Bearer {{token}}
-```
-
-Variable resolution order (last wins): `.env` files → `@var` declarations → `set()` calls.
-
-### `@jq` Filters
-
-Append one or more `@jq` lines after the headers/body to pipe the JSON response through `jq`. Filters are chained.
-
-```txt
-GET https://api.example.com/posts
-
-@jq .[]
-@jq select(.userId == 1)
-@jq .title
-```
-
-Requires `jq` in PATH and a JSON `Content-Type` response. The filtered result is shown in the **Run** tab and is available as `response.jq` in post-response scripts.
-
-### `@example` Blocks
-
-Save an offline example response to show in the TUI when no live run has been made. The block is written in raw HTTP response format:
-
-```txt
-@example {%
-  HTTP/1.1 200 OK
-  Content-Type: application/json
-
-  {"id": 1}
-%}
-```
-
-Press `x` in the TUI to run the request and save its response (or jq output) as the example automatically.
-
-### `@import` Directives
-
-Group your requests into separate `.http` files and import them as groups. Nested groups are supported.
-
-```txt
-# root.http
-
-### Group 1
-@import ./group1.http
-
-### Group 2
-@import ./group2.http
-
-# group1.http
-
-### Login
-POST {{baseUrl}}/login
-Content-Type: application/json
-
-### Group 3
-@import ./group3.http
-```
-
-### `@host` Variable
-
-Use it as the host in all request that start with /.
-
-```txt
-@host = https://api.example.com
-
-### Login
-POST /login
-Content-Type: application/json
-
-{
-  "username": "admin",
-  "password": "secret"
-}
-
-### Status
-@apiVersion = v1
-
-GET /{{apiVersion}}/status
-Accept: application/json
-```
+See [`testdata/sample.http`](./testdata/sample.http) for a full annotated example covering variables, groups, scripts, `@jq` filters, multipart uploads, inline expressions, and saved examples. Supporting files in [`testdata/`](./testdata/) show date/fake data, XML, and nested group imports.
 
 ## JavaScript Scripting API
 
-Scripts run in an embedded ES5.1+ engine ([goja](https://github.com/dop251/goja)). Both hook types share the same global scope.
+Scripts run in an embedded ES5.1+ engine ([goja](https://github.com/dop251/goja)). Globals marked **pre** are available in `@pre-request` blocks; **post** in `@post-response` blocks; **both** in either.
 
-### `@pre-request {%...%}`
-
-Runs before the request is sent. Use it to mutate headers, the URL, or the body.
+### Hook blocks
 
 ```javascript
+// @pre-request {% runs before the request is sent
 request.headers["Authorization"] = "Bearer " + env.token;
-request.headers["X-Timestamp"]   = String(Date.now());
-```
+request.url = request.url + "?ts=" + date.now().unix();
+// %}
 
-### `@post-response {%...%}`
-
-Runs after the response is received. Use it to assert behaviour, capture values, and log output.
-
-```javascript
-test("returns 200", () => {
-  assert(response.status === 200, "expected 200, got " + response.status);
+// @post-response {% runs after the response is received
+test("status 200", () => {
+  assert(response.status === 200);
 });
-
-set("authToken", response.json().token);
-log("captured token:", env.authToken);
+set("token", response.json().access_token);
+log("captured:", env.token);
+// %}
 ```
 
-### Global objects
+### Core globals
 
-| Object | Available in | Description |
-|--------|-------------|-------------|
-| `request` | both | The outgoing request |
-| `response` | post-response | The received response |
-| `env` | both | All variables in the current session |
-
-### `request`
+#### `request` (both)
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `.method` | `string` | HTTP method (`"GET"`, `"POST"`, …) |
-| `.url` | `string` | Full URL after variable interpolation |
-| `.headers` | `object` | Request headers map |
-| `.body` | `string` | Raw request body |
+| `.method` | string | HTTP method (`"GET"`, `"POST"`, …) |
+| `.url` | string | Full URL after variable interpolation |
+| `.headers` | object | Mutable request headers map |
+| `.body` | string | Raw request body |
 
-### `response`
+#### `response` (post)
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `.status` | `number` | HTTP status code |
-| `.statusText` | `string` | Status text (`"OK"`, `"Not Found"`, …) |
-| `.headers` | `object` | Response headers map |
-| `.body` | `string` | Raw response body as a string |
-| `.duration` | `number` | Round-trip time in milliseconds |
-| `.json()` | `function` | Parses `.body` as JSON and returns the value |
-| `.jq` | `any` | Result of `@jq` filters, parsed JSON or string fallback; `null` if no filters defined |
+| `.status` | number | HTTP status code |
+| `.statusText` | string | Status text (`"OK"`, `"Not Found"`, …) |
+| `.headers` | object | Response headers map |
+| `.body` | string | Raw response body |
+| `.duration` | number | Round-trip time in milliseconds |
+| `.json()` | function | Parse `.body` as JSON |
+| `.jq` | any | Result of `@jq` filters; undefined when no filters defined |
+
+#### `env` (both)
+
+A plain object with all session variables. Read with `env.varName`. Variables come from `.env` files, `@var` declarations, and `set()` calls.
 
 ### Functions
 
-| Function | Description |
-|----------|-------------|
-| `test(name, fn)` | Register a named test. `fn` is called immediately; failures are collected and shown in the **Tests** tab. |
-| `assert(cond, msg?)` | Throw (failing the current test) if `cond` is falsy. `msg` is optional. |
-| `set(key, value)` | Write a variable into the shared session env. Available as `{{key}}` in later requests and as `env.key` in scripts. |
-| `log(...args)` | Append formatted output to the **Logs** tab. |
+| Function | Available | Description |
+|----------|-----------|-------------|
+| `test(name, fn)` | post | Register a named test; `fn` runs immediately, failures go to the Tests tab |
+| `assert(cond, msg?)` | post | Throw (failing the current test) if `cond` is falsy |
+| `set(key, value)` | both | Write a variable into the shared session env |
+| `log(...args)` | both | Append output to the Logs tab |
+| `onSuccess(fn)` | post | Call `fn` after the script only if every `test()` passed |
 
-### `env`
+`set()` and `${{expr}}` coerce values automatically: date objects → ISO 8601, numbers → decimal string, booleans → `"true"` / `"false"`, null/undefined → `""`.
 
-A plain object containing all variables currently in scope. Read any variable with `env.varName`. Variables come from `.env` files, `@var` declarations, and previous `set()` calls.
+### `fake` (both)
+
+Backed by [gofakeit](https://github.com/brianvoe/gofakeit).
 
 ```javascript
-log(env.baseUrl);          // read a declared variable
-set("step", "1");          // write — visible to all subsequent requests
-log(env.step);             // "1"
+fake.name()           // "John Doe"
+fake.firstName()      // "John"
+fake.lastName()       // "Doe"
+fake.email()          // "john@example.com"
+fake.uuid()           // "550e8400-..."
+fake.username()       // "user123"
+fake.password(12)     // random password, length 12 (default 12)
+fake.phone()          // "+15551234567"
+fake.url()            // "https://example.com/path"
+fake.ipv4()           // "192.168.1.1"
+fake.color()          // "#a3f8c2"
+fake.hex(8)           // "a3f8c2d1" n hex chars (default 8)
+fake.int(0, 100)      // random int in range (defaults: 0–100)
+fake.float(0.0, 1.0)  // random float in range (defaults: 0–100)
+fake.bool()           // true or false
+fake.word()           // "laptop"
+fake.sentence(6)      // sentence with n words (default 6)
+fake.paragraph()      // 1 paragraph, ~3 sentences
+fake.city()           // "Springfield"
+fake.country()        // "United States"
+fake.address()        // { street, city, state, zip, country }
+fake.date()           // ISO 8601 string of a random date
+fake.pastDate()       // random date in the past 5 years
+fake.futureDate()     // random date in the next 5 years
+```
+
+### `date` (both)
+
+Moment.js-style date manipulation.
+
+```javascript
+// Constructors
+date.now()                   // current time
+date.parse("2024-01-15")     // from string (ISO 8601, MM/DD/YYYY, DD-MM-YYYY, …)
+date.unix(1705276800)        // from unix seconds
+date.unixMs(1705276800000)   // from unix milliseconds
+
+// Arithmetic, returns a new date object
+d.add(1, "day")
+d.subtract(2, "hours")
+// Units: years y  months M  weeks w  days d  hours h  minutes m  seconds s  milliseconds ms
+
+// Formatting
+d.format("YYYY-MM-DD")             // "2024-01-15"
+d.format("YYYY-MM-DDTHH:mm:ss")    // "2024-01-15T10:30:00"
+// Tokens: YYYY YY MM M DD D HH hh h mm m ss s A a Z
+
+// Boundaries
+d.startOf("month")   d.endOf("week")
+// Units: year y  month M  week w  day d  hour h  minute m
+
+// Comparison
+d.isBefore(other)    d.isAfter(other)
+d.diff(other, "days")   // signed integer (self − other)
+
+// Output
+d.unix()          // unix seconds
+d.unixMs()        // unix milliseconds
+d.toISOString()   // "2024-01-15T10:30:00Z"
+
+// Components
+d.year()  d.month()  d.day()  d.weekday()
+d.hour()  d.minute() d.second()
+```
+
+### `jwt` (both)
+
+Decode and inspect JWTs without verifying the signature.
+
+```javascript
+var tok = jwt.decode(response.json().access_token);
+tok.header.alg      // "HS256"
+tok.payload.sub     // "user-123"
+tok.payload.exp     // 1234567890
+
+jwt.isExpired(token)    // true when exp is in the past
+jwt.expiresAt(token)    // date object for exp claim, or null
+
+// Common pattern
+set("authToken", response.json().access_token);
+log("expires in " + jwt.expiresAt(env.authToken).diff(date.now(), "hours") + "h");
+```
+
+### `xml` (both)
+
+```javascript
+var doc = xml.parse(response.body);
+doc.name              // element tag name
+doc.attrs.id          // attribute by name
+doc.text              // trimmed text content
+doc.children          // array of child nodes
+doc.find("item")      // first child named "item", or null
+doc.findAll("item")   // all children named "item"
+```
+
+### Inline expressions — `${{expr}}`
+
+Any `${{expr}}` token in the URL, headers, or body is evaluated as a JavaScript expression at run time, after `{{variable}}` interpolation. All `fake`, `date`, `jwt`, `xml`, and `env` globals are available.
+
+```http
+### Create User
+POST /users/${{fake.uuid()}}
+Content-Type: application/json
+X-Timestamp: ${{date.now().unix()}}
+
+{
+  "name": "${{fake.name()}}",
+  "expiry": "${{date.now().add(30, 'days').toISOString()}}"
+}
 ```
